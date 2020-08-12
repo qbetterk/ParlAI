@@ -1068,6 +1068,18 @@ task_list = [
         ),
     },
     {
+        "id": "MultiWOZDST",
+        "display_name": "MultiWOZDST",
+        "task": "multiwozdst",
+        "tags": ["All", "Goal"],
+        "description": (
+            "A fully labeled collection of human-written conversations spanning"
+            "over multiple domains and topics."
+            "(see http://dialogue.mi.eng.cam.ac.uk/index.php/corpus/"
+            " for more information). "
+        ),
+    },
+    {
         "id": "SelfChat",
         "display_name": "SelfChat",
         "task": "self_chat",
