@@ -322,6 +322,7 @@ def reformat_parlai(data_dir, force_reformat=False):
        os.path.exists(os.path.join(data_dir, 'data_reformat_dev.json')) and \
        os.path.exists(os.path.join(data_dir, 'data_reformat_test.json')) and \
        not force_reformat:
+        # pass
         print("already reformat data before, skipping this time ...")
     else:
         reformat = Reformat_SGD(data_dir)

@@ -88,5 +88,35 @@ class Google_SGD_DST_Teacher(FixedDialogTeacher):
         }
         return action
 
+    def _extract_slot_from_string(self, slots_string):
+        """
+        Either ground truth or generated result should be in the format:
+        "dom slot_type slot_val, dom slot_type slot_val, ..., dom slot_type slot_val,"
+        and this function would reformat the string into list:
+        ["dom slot_type slot_val", ... ]
+        """
+        slots_list = []
+
+        # # # split according to ","
+        str_split = slots_string.split(",")
+        if str_split[-1] == "":
+            str_split = str_split[:-1]
+        slots_list = [slot.strip() for slot in str_split]
+
+        return slots_list
+
+    def custom_evaluation(self, teacher_action: Message, labels, model_response: Message):
+        resp = model_response.get('text')
+        if not resp:
+            return
+
+        # # # extract ground truth from labels
+        slots_truth = self._extract_slot_from_string(labels[0])
+        
+        # # # extract generated slots from model_response
+        slots_pred = self._extract_slot_from_string(resp)
+
+        self.metrics.add('joint goal acc', AverageMetric(set(slots_truth) == set(slots_pred)))
+
 class DefaultTeacher(Google_SGD_DST_Teacher):
     pass

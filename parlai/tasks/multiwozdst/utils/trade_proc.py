@@ -439,11 +439,6 @@ def SaveData(data, data_dir):
         else:
             print(dialogue_name)
 
-    # import pdb
-    # pdb.set_trace()
-
-    # print("# of dialogues: Train {}, Val {}, Test {}".format(count_train, count_val, count_test))
-
     # save all dialogues
     with open(os.path.join(data_dir, "dials_trade.json"), 'w') as f:
         json.dump(dials, f, indent=2)
@@ -454,7 +449,8 @@ def trade_process(data_dir=None, force_proc=False):
     # trade_proc.createData()
     # trade_proc.SaveData()
     if os.path.exists(os.path.join(data_dir, "dials_trade.json")) and not force_proc:
-        print("already preprocessed before, skipping this time ...")
+        pass
+        # print("already preprocessed before, skipping this time ...")
     else:
         delex_data = createData(data_dir)
         SaveData(delex_data, data_dir)
