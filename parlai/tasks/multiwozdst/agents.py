@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
 #
+# Copyright (c) Facebook, Inc. and its affiliates.
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+"""
+DST on Multiwoz2.1 Dataset implementation for ParlAI.
+"""
 import sys, os
 import json
 
@@ -16,7 +23,6 @@ def _path(opt):
     data_dir = os.path.join(opt['datapath'], 'multiwozdst', 'MULTIWOZ2.1')
     # data_dir = os.path.join('/checkpoint/kunqian/multiwoz/data/MultiWOZ_2.1/')
     data_path = os.path.join(data_dir, 'data_reformat_trade_turn_sa_ha.json')
-
 
     # build the data if it does not exist
     build(opt)
@@ -124,11 +130,6 @@ class MultiWozDSTTeacher(FixedDialogTeacher):
         slots_pred = self._extract_slot_from_string(resp)
 
         self.metrics.add('joint goal acc', AverageMetric(set(slots_truth) == set(slots_pred)))
-
-        # if set(slots_truth) == set(slots_pred):
-        #     self.metrics.add('joint goal acc', AverageMetric(1))
-        # else:
-        #     self.metrics.add('joint goal acc', AverageMetric(0))
 
     def num_examples(self):
         # each turn be seen as a individual dialog

@@ -1252,4 +1252,15 @@ task_list = [
             "human and a virtual assistant."
         ),
     },
+    {
+        "id": "GoogleSGDDST",
+        "display_name": "GoogleSGDDST",
+        "task": "google_sgd_dst",
+        "tags": ["All", "Goal"],
+        "description": (
+            "The Schema-Guided Dialogue (SGD) dataset consists of over 20k "
+            "annotated multi-domain, task-oriented conversations between a "
+            "human and a virtual assistant."
+        ),
+    },
 ]

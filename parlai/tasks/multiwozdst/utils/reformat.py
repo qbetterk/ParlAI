@@ -313,7 +313,7 @@ def reformat_parlai(data_dir, force_reformat=False):
     if os.path.exists(os.path.join(data_dir, 'data_reformat_trade_turn_sa_ha_train.json')) and not force_reformat:
         print("already reformat data before, skipping this time ...")
     else:
-        reformat = reformat = Reformat_Multiwoz(data_dir)
+        reformat = Reformat_Multiwoz(data_dir)
         reformat.reformat_from_trade_proc_to_turn()
 
 
