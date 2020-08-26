@@ -27,11 +27,13 @@ def _path(opt):
     # build the data if it does not exist
     build(opt)
 
-    # process the data with TRADE's code
-    trade_process(data_dir)
+    # process the data with TRADE's code, if it does not exist
+    if not os.path.exists(os.path.join(data_dir, 'dials_trade.json')):
+        trade_process(data_dir)
 
     # reformat data for DST
-    reformat_parlai(data_dir)
+    if not os.path.exists(data_path):
+        reformat_parlai(data_dir)
 
     return data_path, data_dir
 
@@ -44,9 +46,35 @@ class MultiWozDSTTeacher(FixedDialogTeacher):
     def __init__(self, opt, shared=None):
         super().__init__(opt, shared)
         opt['datafile'], jsons_path = _path(opt)
-        self._setup_data(opt['datafile'], jsons_path)
         self.id = 'multiwozdst'
+
+        # # # reading args
+        self.decode_all = opt.get('decode_all', False)
+        self.just_test = opt.get('just_test', False)
+
+        # import pdb
+        # pdb.set_trace()
+        self._setup_data(opt['datafile'], jsons_path)
+
         self.reset()
+
+    @classmethod
+    def add_cmdline_args(cls, argparser):
+        agent = argparser.add_argument_group('MultiWozDST Teacher Args')
+        agent.add_argument(
+            '-dall',
+            '--decode_all',
+            type='bool',
+            default=False,
+            help="True if one would like to decode dst for all samples in training data, probably for \
+            training a correction model (default: False).",
+        )
+        agent.add_argument(
+            '--just_test',
+            type='bool',
+            default=False,
+            help="True if one would like to test agents with small amount of data (default: False).",
+        )
 
     def _load_txt(self, file_path):
         with open(file_path) as df:
@@ -60,10 +88,11 @@ class MultiWozDSTTeacher(FixedDialogTeacher):
         return data
 
     def _setup_data(self, data_path, jsons_path):
-        print('loading: ' + data_path)
-
         # # # loading directly from test file or val file
-        if self.datatype.startswith('test'):
+        if self.decode_all:
+            all_data = self._load_json(data_path)
+            self.messages = list(all_data.values())
+        elif self.datatype.startswith('test'):
             test_path = data_path.replace(".json", "_test.json")
             test_data = self._load_json(test_path)
             self.messages = list(test_data.values())
@@ -75,7 +104,9 @@ class MultiWozDSTTeacher(FixedDialogTeacher):
             train_path = data_path.replace(".json", "_train.json")
             train_data = self._load_json(train_path)
             self.messages = list(train_data.values())
-    
+        
+        if self.just_test:
+            self.messages = self.messages[:10]
 
     def _extract_slot_from_string(self, slots_string):
         """
@@ -85,10 +116,15 @@ class MultiWozDSTTeacher(FixedDialogTeacher):
         ["dom--slot_type--slot_val", ... ]
         """
         domains    = ["attraction", "hotel", "hospital", "restaurant", "police", "taxi", "train"]
-        slot_types = ['book time', 'leaveat', 'name', 'internet', 'book stay', 
-                      'pricerange', 'arriveby', 'area', 'destination', 'day', 
-                      'food', 'departure', 'book day', 'book people', 'department', 
-                      'stars', 'parking', 'type']
+        # slot_types = ['book time', 'leaveat', 'name', 'internet', 'book stay', 
+        #               'pricerange', 'arriveby', 'area', 'destination', 'day', 
+        #               'food', 'departure', 'book day', 'book people', 'department', 
+        #               'stars', 'parking', 'type']
+        slot_types = ["stay", "price", "addr",  "type", "arrive", "day", "depart", "dest",
+                    "area", "leave", "stars", "department", "people", "time", "food", 
+                    "post", "phone", "name", 'internet', 'parking',
+                    'book stay', 'book people','book time', 'book day',
+                    'pricerange', 'destination', 'leaveat', 'arriveby', 'departure']
         slots_list = []
 
         # # # remove start and ending token
@@ -114,9 +150,9 @@ class MultiWozDSTTeacher(FixedDialogTeacher):
                 else:
                     slot_type = slot[1]
                     slot_val  = " ".join(slot[2:])
-                slots_list.append(domain+"--"+slot_type+"--"+slot_val)
+                if not slot_val == 'dontcare':
+                    slots_list.append(domain+"--"+slot_type+"--"+slot_val)
         return slots_list
-
 
     def custom_evaluation(self, teacher_action: Message, labels, model_response: Message):
         resp = model_response.get('text')
@@ -147,9 +183,14 @@ class MultiWozDSTTeacher(FixedDialogTeacher):
             'text': entry,
             'episode_done': episode_done,
             'labels': [self.messages[episode_idx]['slots_inf']],
+            'dial_id': self.messages[episode_idx]['dial_id'],
+            'turn_num': self.messages[episode_idx]['turn_num'],
         }
         return action
 
 
 class DefaultTeacher(MultiWozDSTTeacher):
+    """
+    Default teacher.
+    """
     pass

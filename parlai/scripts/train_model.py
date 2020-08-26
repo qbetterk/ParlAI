@@ -438,8 +438,9 @@ class TrainLoop:
             and opt.get('save_after_valid')
             and is_primary_worker()
         ):
-            logging.info(f"saving model checkpoint: {opt['model_file']}.checkpoint")
-            self.save_model('.checkpoint')
+            logging.info(f"saving model checkpoint: {opt['model_file']}.checkpoint_ep{self._total_epochs:.0f}")
+            self.save_model(f'.checkpoint_ep{self._total_epochs:.0f}')
+
 
         # send valid metrics to agent if the agent wants them
         if hasattr(self.agent, 'receive_metrics'):
@@ -646,6 +647,7 @@ class TrainLoop:
         logging.info('training...')
         opt = self.opt
         world = self.world
+        self._prev_epoch = 0
         with world:
             while True:
                 # do one example / batch of examples
@@ -710,6 +712,17 @@ class TrainLoop:
                         break
                     # make sure metrics are clean before we log
                     world.reset_metrics()
+                # import pdb
+                # pdb.set_trace()
+                elif (self.val_every_n_epochs == float('inf') and 
+                    opt.get('model_file') and 
+                    is_primary_worker() and 
+                    int(self._total_epochs) != self._prev_epoch
+                ):
+                    logging.info(f"saving model checkpoint: {opt['model_file']}.checkpoint_ep{self._total_epochs:.0f}")
+                    self.save_model(f'.checkpoint_ep{self._total_epochs:.0f}')
+                    self._prev_epoch = int(self._total_epochs)
+
                 if (
                     self.save_time.time() > self.save_every_n_secs
                     and opt.get('model_file')
@@ -741,22 +754,22 @@ class TrainLoop:
             # reload best validation model
             self.agent = create_agent(opt)
 
-        # perform final validation/testing
-        valid_worlds = load_eval_worlds(self.agent, opt, 'valid')
-        max_exs = opt['validation_max_exs'] if opt.get('short_final_eval') else -1
-        v_report = self._run_eval(valid_worlds, opt, 'valid', max_exs, write_log=True)
-        test_worlds = load_eval_worlds(self.agent, opt, 'test')
-        t_report = self._run_eval(test_worlds, opt, 'test', max_exs, write_log=True)
-        if valid_worlds:
-            for valid_world in valid_worlds:
-                valid_world.shutdown()
-        if test_worlds:
-            for test_world in test_worlds:
-                test_world.shutdown()
+        # # perform final validation/testing
+        # valid_worlds = load_eval_worlds(self.agent, opt, 'valid')
+        # max_exs = opt['validation_max_exs'] if opt.get('short_final_eval') else -1
+        # v_report = self._run_eval(valid_worlds, opt, 'valid', max_exs, write_log=True)
+        # test_worlds = load_eval_worlds(self.agent, opt, 'test')
+        # t_report = self._run_eval(test_worlds, opt, 'test', max_exs, write_log=True)
+        # if valid_worlds:
+        #     for valid_world in valid_worlds:
+        #         valid_world.shutdown()
+        # if test_worlds:
+        #     for test_world in test_worlds:
+        #         test_world.shutdown()
 
-        print_announcements(opt)
+        # print_announcements(opt)
 
-        return v_report, t_report
+        # return v_report, t_report
 
 
 @register_script('train_model', aliases=['tm', 'train'])

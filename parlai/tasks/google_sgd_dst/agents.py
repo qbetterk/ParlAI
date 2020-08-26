@@ -40,14 +40,29 @@ class Google_SGD_DST_Teacher(FixedDialogTeacher):
     def __init__(self, opt: Opt, shared=None):
         super().__init__(opt, shared)
         opt['datafile'], jsons_path = _path(opt)
-        self._setup_data(opt['datafile'], jsons_path)
         self.id = 'google_sgd_dst'
+        
+        # # # reading args
+        self.decode_all = opt.get('decode_all', False)
+        self.just_test = opt.get('just_test', False)
+
+        self._setup_data(opt['datafile'], jsons_path)
         self.reset()
 
     def _load_json(self, file_path):
         with open(file_path) as df:
             data = json.loads(df.read().lower())
         return data
+
+    @classmethod
+    def add_cmdline_args(cls, argparser):
+        agent = argparser.add_argument_group('Google SGD DST Teacher Args')
+        agent.add_argument(
+            '--just_test',
+            type='bool',
+            default=False,
+            help="True if one would like to test agents with small amount of data (default: False).",
+        )
 
     def _setup_data(self, data_path, jsons_path):
         print('loading: ' + data_path)
@@ -66,6 +81,8 @@ class Google_SGD_DST_Teacher(FixedDialogTeacher):
             train_data = self._load_json(train_path)
             self.messages = list(train_data.values())
 
+        if self.just_test:
+            self.messages = self.messages[:10]
 
     def num_examples(self):
         examples = 0

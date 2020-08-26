@@ -232,6 +232,8 @@ class Reformat_Multiwoz(object):
             json.dump(self.dials_val, tf, indent=2)
         with open(self.reformat_test_data_path, "w") as tf:
             json.dump(self.dials_test, tf, indent=2)
+        with open(self.reformat_data_path, "w") as tf:
+            json.dump(self.dials_form, tf, indent=2)
 
     def save_dials(self):
         with open(self.reformat_data_path, "w") as tf:
@@ -291,32 +293,36 @@ class Reformat_Multiwoz(object):
         return " ".join(slots_inf)
 
 
-# def Parse_args():
-#     parser = argparse.ArgumentParser()
-#     parser.add_argument("-d", "--dataset",   default="multiwoz")
-#     parser.add_argument(      "--slot_accm", default=1, type=int)
-#     parser.add_argument(      "--hist_accm", default=1, type=int)
-#     parser.add_argument(      "--trade", default=1, type=int)
-#     parser.add_argument(      "--order", default="dtv", type=str,
-#                                          help="slot order, default as : domain, slot_type, slot_value")
-#     parser.add_argument(      "--mask_predict", default=0, type=int)
-#     parser.add_argument(      "--reformat_data_name", default=None)
-#     parser.add_argument(      "--save_dial", default=True, type=bool)
-#     parser.add_argument(      "--data_dir", default="/checkpoint/kunqian/multiwoz/data/MultiWOZ_2.1/")
-
-#     args = parser.parse_args()
-#     return args
-
 def reformat_parlai(data_dir, force_reformat=False):
     # args = Parse_args()
     # args.data_dir = data_dir
-    if os.path.exists(os.path.join(data_dir, 'data_reformat_trade_turn_sa_ha_train.json')) and not force_reformat:
+    if os.path.exists(os.path.join(data_dir, 'data_reformat_trade_turn_sa_ha.json')) and \
+       os.path.exists(os.path.join(data_dir, 'data_reformat_trade_turn_sa_ha_train.json')) and \
+       os.path.exists(os.path.join(data_dir, 'data_reformat_trade_turn_sa_ha_valid.json')) and \
+       os.path.exists(os.path.join(data_dir, 'data_reformat_trade_turn_sa_ha_test.json')) and \
+       not force_reformat:
         pass
         # print("already reformat data before, skipping this time ...")
     else:
         reformat = Reformat_Multiwoz(data_dir)
         reformat.reformat_from_trade_proc_to_turn()
 
+
+def Parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-d", "--dataset",   default="multiwoz")
+    parser.add_argument(      "--slot_accm", default=1, type=int)
+    parser.add_argument(      "--hist_accm", default=1, type=int)
+    parser.add_argument(      "--trade", default=1, type=int)
+    parser.add_argument(      "--order", default="dtv", type=str,
+                                         help="slot order, default as : domain, slot_type, slot_value")
+    parser.add_argument(      "--mask_predict", default=0, type=int)
+    parser.add_argument(      "--reformat_data_name", default=None)
+    parser.add_argument(      "--save_dial", default=True, type=bool)
+    parser.add_argument(      "--data_dir", default="/checkpoint/kunqian/multiwoz/data/MultiWOZ_2.1/")
+
+    args = parser.parse_args()
+    return args
 
 def main():
     args = Parse_args()
@@ -331,11 +337,9 @@ def main():
             else:
                 # reformat.reformat_from_trade_proc()
                 reformat.reformat_from_trade_proc_to_turn()
-                reformat.save_dials()
                 # print(sorted(list(reformat.slot_type_set)))
         else:
             reformat.reformat_slots()
-            reformat.save_dials()
     elif args.dataset == "sgd":
         reformat = Reformat_SGD(args)
         reformat.reformat_slots()
