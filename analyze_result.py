@@ -322,20 +322,21 @@ class Clean_Analyze_result(object):
 
         stats = {
                 "overall": {
-                    "domain":0, 
-                    "slot_type":0, 
-                    "slot_val":0, 
+                    "domain"    :0,   # for matched
+                    "slot_type" :0,   # for matched
+                    "slot_val"  :0,   # for matched
                     "extra_slot_num":0,
                     "match_slot_num":0,
-                    "miss_slot_num":0,
+                    "miss_slot_num" :0,
                     },
                 "match" : {
-                    "domain":{},  # dom1-dom2-slot_type
-                    "slot_type":{},  # dom-slot_type1-slot_typ2
-                    "slot_val":{}
+                    "domain"    : {},  # dom1-dom2-slot_type
+                    "slot_type" : {},  # dom-slot_type1-slot_typ2
+                    "slot_val"  : {},
+                    "slot_num"  : {},
                     },
-                "extra" : {},
-                "miss"  : {}
+                "extra" : {"slot_num":{}},
+                "miss"  : {"slot_num":{}},
         }
         for dial_id, dial in clean_result.items():
             for tn, turn in dial.items():
@@ -345,7 +346,17 @@ class Clean_Analyze_result(object):
                 miss_predict_split = [slot.split("--") for slot in miss_predict]
                 stats["overall"]["extra_slot_num"] += len(extra_predict)
                 stats["overall"]["miss_slot_num"] += len(miss_predict)
+
+                if len(turn["ground_truth"]) not in stats["extra"]["slot_num"]:
+                    stats["extra"]["slot_num"][len(turn["ground_truth"])] = defaultdict(int)
+                stats["extra"]["slot_num"][len(turn["ground_truth"])][len(extra_predict)] += 1
+                if len(turn["ground_truth"]) not in stats["miss"]["slot_num"]:
+                    stats["miss"]["slot_num"][len(turn["ground_truth"])] = defaultdict(int)
+                stats["miss"]["slot_num"][len(turn["ground_truth"])][len(miss_predict)] += 1
+                if len(turn["ground_truth"]) not in stats["match"]["slot_num"]:
+                    stats["match"]["slot_num"][len(turn["ground_truth"])] = defaultdict(int)
                 if len(extra_predict) == 0 or len(miss_predict) == 0:
+                    stats["match"]["slot_num"][len(turn["ground_truth"])]["0"] += 1
                     continue
 
                 matched_slot = []
@@ -406,6 +417,7 @@ class Clean_Analyze_result(object):
                                 # overall count
                                 stats["overall"]["domain"] += 1
                                 # detailed count    dom1-dom2:{type: num}
+                                # dual_dom = "--".join([extra_slot[0], miss_slot[0]])
                                 dual_dom = "--".join(sorted([extra_slot[0], miss_slot[0]]))
                                 if dual_dom not in stats["match"]["domain"]:
                                     stats["match"]["domain"][dual_dom] = {"total" : 0, extra_slot[1] : 0}
@@ -456,6 +468,7 @@ class Clean_Analyze_result(object):
                         stats["miss"][miss_slot[0]][miss_slot[1]] += 1
                         stats["miss"][miss_slot[0]]["total"] += 1
 
+                stats["match"]["slot_num"][len(turn["ground_truth"])][len(matched_slot)] += 1
 
         # with open(extra_slot_path, 'w') as tf:
         #     json.dump(extra_slot_turn, tf, indent = 2)
@@ -684,15 +697,20 @@ def main():
     path = "./experiment/cor_gpt2/model.result.jsonl"
     path = "./experiment/gpt2_dst_nodict/result_test_bs1_2gpu.json"
     path = "./experiment/gpt2_dst_owndict/result.jsonl"
-    # path = "./experiment/gen_gpt2_nodict/result_decode_all_bs8.jsonl"
+    path = "./experiment/gen_gpt2_nodict/result_decode_all_bs8.jsonl"
     path = "./experiment/gen_gpt2_nodict/result_decode_all.jsonl"
-    path = "./experiment/gen_gpt2_nodict/result_test.jsonl"
-    path = "./experiment/cor_gpt2_nod_gen_errbs1_fomi/result_test_ep5.jsonl"
-    # path = "./experiment/cor_gpt2_nod_gen_errbs1_foex/result_test_ep4.jsonl"
-    # path = "./experiment/cor_gpt2_nod_gen_errbs1/result_test.jsonl"
-    # path = "./experiment/cor_gpt2_nod_fresh_errbs1/result_test.jsonl"
-    path = "./experiment/cor_gpt2_nod_gen_errbs8/result_test_ep9.jsonl"
-    # path = "./experiment/old_data/cor_gpt2_re/result_test.jsonl"
+    path = "./experiment/gen_gpt2_nodict/result_test.jsonl"                       # 0.5567
+    # path = "./experiment/cor_gpt2_nod_gen_errbs1_fomi/result_test_ep5.jsonl"    # 0.5570
+    # path = "./experiment/cor_gpt2_nod_gen_errbs1_foex/result_test_ep4.jsonl"    # 0.5542
+    # path = "./experiment/cor_gpt2_nod_gen_errbs1/result_test.jsonl"             # 0.5553
+    # path = "./experiment/cor_gpt2_nod_fresh_errbs1/result_test.jsonl"           # 0.5557
+    # path = "./experiment/cor_gpt2_nod_gen4_errbs1/result_test_ep5.jsonl"        # 0.5566
+    # path = "./experiment/cor_gpt2_nod_gen_errbs8/result_test_ep9.jsonl"         # 0.5604
+    # # # path = "./experiment/old_data/cor_gpt2_re/result_test.jsonl"
+    # path = "./experiment/cor_gpt2_nod_gen_errbs8_fomi/result_test_ep5.jsonl"    # 0.5589
+    # path = "./experiment/cor_gpt2_nod_gen_errbs8_foex/result_test_ep2.jsonl"    # 0.5519
+    # path = "./experiment/cor_gpt2_nod_gen_errbs8_re/result_test_ep4.jsonl"      # 0.5578
+    # path = "./experiment/cor_gpt2_nod_gen_errbs8_re_8010/result_test_ep5.jsonl" # 0.5557
     
     clean_analyze_result = Clean_Analyze_result(path_result=path)
 

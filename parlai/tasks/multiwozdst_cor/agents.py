@@ -34,6 +34,7 @@ class MultiWozDSTCORTeacher(FixedDialogTeacher):
         self.decode_all = opt.get('decode_dall', False)
         self.just_test = opt.get('just_test', False)
         self.repeat_minor_err = opt.get('repeat_minor_err', False)
+        self.add_err = opt.get('add_err', False)
         self.err_data_path = opt.get('err_data_path', None)
         self.split_decoded_data = opt.get('split_decoded_data', False)
         self.data_name = opt.get('data_name', None)
@@ -82,6 +83,12 @@ class MultiWozDSTCORTeacher(FixedDialogTeacher):
             type=str,
             default=None,
             help="specify the data file name (default: None).",
+        )
+        agent.add_argument(
+            '--add_err',
+            type='bool',
+            default=False,
+            help="True if one would like to create errors (default: False).",
         )
 
 
@@ -137,9 +144,14 @@ class MultiWozDSTCORTeacher(FixedDialogTeacher):
             self.messages = list(valid_data.values())
         else:
             train_path = data_path.replace(".json", "_train.json")
+            # # # repeat turns with one/two err
             if self.repeat_minor_err:
                 adderr = AddErr(train_path, data_dir)
                 self.messages = adderr.repeat_err()
+            # # # manually add err following dist from err file
+            elif self.add_err:
+                adderr = AddErr(train_path, data_dir)
+                self.messages = adderr.add_err()
             else:
                 train_data = self._load_json(train_path)
                 self.messages = list(train_data.values())
