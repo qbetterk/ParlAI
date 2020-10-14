@@ -39,6 +39,7 @@ from parlai.core.metrics import (
     FairseqBleuMetric,
 )
 from parlai.utils.fp16 import FP16SafeCrossEntropy
+from parlai.utils.focalloss import SequenceFocalLoss
 from parlai.utils.torch import (
     neginf,
     total_parameters,
@@ -557,9 +558,11 @@ class TorchGeneratorAgent(TorchAgent, ABC):
             return torch.nn.CrossEntropyLoss(
                 ignore_index=self.NULL_IDX, reduction='none'
             )
+            # return SequenceFocalLoss(ignore_index=self.NULL_IDX)
         else:
-            # FP16 safe cross entropy (softmax done in FP32)
+            # # FP16 safe cross entropy (softmax done in FP32)
             return FP16SafeCrossEntropy(ignore_index=self.NULL_IDX, reduction='none')
+            # return SequenceFocalLoss(ignore_index=self.NULL_IDX)
 
     def _v2t(self, vec):
         """

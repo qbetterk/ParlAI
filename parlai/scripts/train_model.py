@@ -432,14 +432,14 @@ class TrainLoop:
             self.tb_logger.log_metrics('valid', self.parleys, valid_report)
             # flush on a validation
             self.tb_logger.flush()
-        # saving
-        if (
-            opt.get('model_file')
-            and opt.get('save_after_valid')
-            and is_primary_worker()
-        ):
-            logging.info(f"saving model checkpoint: {opt['model_file']}.checkpoint_ep{self._total_epochs:.0f}")
-            self.save_model(f'.checkpoint_ep{self._total_epochs:.0f}')
+        # # saving
+        # if (
+        #     opt.get('model_file')
+        #     and opt.get('save_after_valid')
+        #     and is_primary_worker()
+        # ):
+        #     logging.info(f"saving model checkpoint: {opt['model_file']}.checkpoint_ep{self._total_epochs:.0f}")
+        #     self.save_model(f'.checkpoint_ep{self._total_epochs:.0f}')
 
 
         # send valid metrics to agent if the agent wants them
