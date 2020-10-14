@@ -1068,9 +1068,9 @@ task_list = [
         ),
     },
     {
-        "id": "MultiWOZDST",
-        "display_name": "MultiWOZDST",
-        "task": "multiwozdst",
+        "id": "MultiWOZ_DST",
+        "display_name": "MultiWOZ_DST",
+        "task": "multiwoz_dst",
         "tags": ["All", "Goal"],
         "description": (
             "A fully labeled collection of human-written conversations spanning"
@@ -1083,6 +1083,102 @@ task_list = [
         "id": "MultiWOZDST_COR",
         "display_name": "MultiWOZDST_COR",
         "task": "multiwozdst_cor",
+        "tags": ["All", "Goal"],
+        "description": (
+            "A fully labeled collection of human-written conversations spanning"
+            "over multiple domains and topics."
+            "(see http://dialogue.mi.eng.cam.ac.uk/index.php/corpus/"
+            " for more information). "
+        ),
+    },
+    {
+        "id": "MultiWOZDST_COR_ERR",
+        "display_name": "MultiWOZDST_COR_ERR",
+        "task": "multiwozdst_cor_err",
+        "tags": ["All", "Goal"],
+        "description": (
+            "A fully labeled collection of human-written conversations spanning"
+            "over multiple domains and topics."
+            "(see http://dialogue.mi.eng.cam.ac.uk/index.php/corpus/"
+            " for more information). "
+        ),
+    },
+    {
+        "id": "MultiWOZ_DOM",
+        "display_name": "MultiWOZ_DOM",
+        "task": "multiwoz_dom",
+        "tags": ["All", "Goal"],
+        "description": (
+            "A fully labeled collection of human-written conversations spanning"
+            "over multiple domains and topics."
+            "(see http://dialogue.mi.eng.cam.ac.uk/index.php/corpus/"
+            " for more information). "
+        ),
+    },
+    {
+        "id": "MultiWOZ_TYPE",
+        "display_name": "MultiWOZ_TYPE",
+        "task": "multiwoz_type",
+        "tags": ["All", "Goal"],
+        "description": (
+            "A fully labeled collection of human-written conversations spanning"
+            "over multiple domains and topics."
+            "(see http://dialogue.mi.eng.cam.ac.uk/index.php/corpus/"
+            " for more information). "
+        ),
+    },
+    {
+        "id": "MultiWOZ_VALUE",
+        "display_name": "MultiWOZ_VALUE",
+        "task": "multiwoz_value",
+        "tags": ["All", "Goal"],
+        "description": (
+            "A fully labeled collection of human-written conversations spanning"
+            "over multiple domains and topics."
+            "(see http://dialogue.mi.eng.cam.ac.uk/index.php/corpus/"
+            " for more information). "
+        ),
+    },
+    {
+        "id": "MultiWOZ_VALUE_ALLTYPE",
+        "display_name": "MultiWOZ_VALUE_ALLTYPE",
+        "task": "multiwoz_value_alltype",
+        "tags": ["All", "Goal"],
+        "description": (
+            "A fully labeled collection of human-written conversations spanning"
+            "over multiple domains and topics."
+            "(see http://dialogue.mi.eng.cam.ac.uk/index.php/corpus/"
+            " for more information). "
+        ),
+    },
+    {
+        "id": "MultiWOZ_VALUE_ALLTYPE_SEP",
+        "display_name": "MultiWOZ_VALUE_ALLTYPE_SEP",
+        "task": "multiwoz_value_alltype_sep",
+        "tags": ["All", "Goal"],
+        "description": (
+            "A fully labeled collection of human-written conversations spanning"
+            "over multiple domains and topics."
+            "(see http://dialogue.mi.eng.cam.ac.uk/index.php/corpus/"
+            " for more information). "
+        ),
+    },
+    {
+        "id": "MultiWOZ_VALUE_ALLTYPE_SEQ",
+        "display_name": "MultiWOZ_VALUE_ALLTYPE_SEQ",
+        "task": "multiwoz_value_alltype_seq",
+        "tags": ["All", "Goal"],
+        "description": (
+            "A fully labeled collection of human-written conversations spanning"
+            "over multiple domains and topics."
+            "(see http://dialogue.mi.eng.cam.ac.uk/index.php/corpus/"
+            " for more information). "
+        ),
+    },
+    {
+        "id": "MultiWOZ_NLDST",
+        "display_name": "MultiWOZ_NLDST",
+        "task": "multiwoz_nldst",
         "tags": ["All", "Goal"],
         "description": (
             "A fully labeled collection of human-written conversations spanning"

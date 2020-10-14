@@ -128,7 +128,8 @@ class Reformat_Multiwoz(object):
                         "dial_id": dial_id
                         "turn_num": 0,
                         "slots_inf": slot sequence ("dom slot_type1 slot_val1, dom slot_type2 ..."),
-                        "slots_err": slot sequence ("dom slot_type1 slot_type2, ..."),
+                        "slots_err": "",
+                        "slots_domtype" : slot dom&type sequence ("dom slot_type1, dom slot_type2, ..."),
                         "context" : "User: ... Sys: ... User:..."
                     },
             ...
@@ -151,7 +152,7 @@ class Reformat_Multiwoz(object):
                 turn_form["dial_id"] = dial["dialogue_idx"]
                 
                 # # # slots/dialog states
-                slots_inf = []
+                slots_inf, slots_domtype = [], []
                 if not self.slot_accm:
                     # # # dialog states only for the current turn, extracted based on "turn_label"
                     for slot in turn["turn_label"]:
@@ -169,6 +170,11 @@ class Reformat_Multiwoz(object):
                                     slot_[self.order[0]], 
                                     slot_[self.order[1]], 
                                     slot_[self.order[2]],
+                                    ",",
+                                    ]
+                        slots_domtype += [
+                                    slot_[self.order[0]], 
+                                    slot_[self.order[1]],
                                     ",",
                                     ]
                         # slots_inf += [domain, slot_type, slot_val]
@@ -193,14 +199,20 @@ class Reformat_Multiwoz(object):
                                           slot_[self.order[2]],
                                           ",",
                                           ]
+                            slots_domtype += [
+                                        slot_[self.order[0]], 
+                                        slot_[self.order[1]],
+                                        ",",
+                                        ]
                             # slots_inf += [domain, slot_type, slot_val]
 
                             # self.slot_type_set.add(slot_type)
 
                 turn_form["slots_inf"] = " ".join(slots_inf)
+                turn_form["slots_domtype"] = " ".join(slots_domtype)
 
                 # # # import error
-                turn_form["slots_err"] = self.create_err(slots_inf[:])
+                turn_form["slots_err"] = ""
 
                 # # # dialog history
                 if turn["system_transcript"] != "":

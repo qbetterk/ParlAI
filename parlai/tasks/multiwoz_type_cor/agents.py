@@ -28,7 +28,7 @@ class MultiWozDSTCORTeacher(FixedDialogTeacher):
 
     def __init__(self, opt, shared=None):
         super().__init__(opt, shared)
-        self.id = 'multiwozdst_cor'
+        self.id = 'multiwoz_type_cor'
 
         # # # loading args
         self.decode_all = opt.get('decode_dall', False)
@@ -111,7 +111,7 @@ class MultiWozDSTCORTeacher(FixedDialogTeacher):
 
     def _path(self, opt):
         # # set up path to data (specific to each dataset)
-        data_dir = os.path.join(opt['datapath'], 'multiwozdst_cor')
+        data_dir = os.path.join(opt['datapath'], 'multiwoz_type_cor')
         if self.data_name is not None:
             data_name = self.data_name
         else:
@@ -120,12 +120,12 @@ class MultiWozDSTCORTeacher(FixedDialogTeacher):
         if not os.path.exists(data_dir):
             os.mkdir(data_dir)
 
-        if self.split_decoded_data:
+        if self.split_decoded_data or not os.path.exists(data_path):
             # multiwoz data path
-            multiwozdst_dir = os.path.join(opt['datapath'], 'multiwoz_dst', 'MULTIWOZ2.1')
+            multiwozdst_dir = os.path.join(opt['datapath'], 'multiwoz_type', 'MULTIWOZ2.1')
             # generated err slots path
             if self.err_data_path is None:
-                err_data_path = os.path.join("./experiment/gen_gpt2_nodict/", 'result_decode_all.jsonl')
+                err_data_path = os.path.join("./experiment/gen_gpt2_nod_type_valacc/", 'result_decode_all_bs8.jsonl')
             else:
                 err_data_path = self.err_data_path
             # # # create and split data into train, val, test set
@@ -158,7 +158,7 @@ class MultiWozDSTCORTeacher(FixedDialogTeacher):
         elif self.datatype.startswith('valid'):
             valid_path = data_path.replace(".json", "_valid.json")
             valid_data = self._load_json(valid_path)
-            self.messages = random.sample(list(valid_data.values()), k=3000) # total 7374
+            self.messages = random.sample(list(valid_data.values()), k=2000) # total 7374
         else:
             train_path = data_path.replace(".json", "_train.json")
             # # # repeat turns with one/two err
@@ -194,31 +194,23 @@ class MultiWozDSTCORTeacher(FixedDialogTeacher):
                     'pricerange', 'destination', 'leaveat', 'arriveby', 'departure']
         slots_list = []
 
-        # # # remove start and ending token
-        str_split = slots_string.strip().split()
-        if str_split != [] and str_split[0] in ["<bs>", "</bs>"]:
-            str_split = str_split[1:]
-        if "</bs>" in str_split:
-            str_split = str_split[:str_split.index("</bs>")]
-
         # # # split according to ","
-        str_split = " ".join(str_split).split(",")
+        str_split = slots_string.strip().split(",")
         if str_split[-1] == "":
             str_split = str_split[:-1]
         str_split = [slot.strip() for slot in str_split]
 
         for slot_ in str_split:
             slot = slot_.split()
-            if len(slot) > 2 and slot[0] in domains:
+            if len(slot) > 1 and slot[0] in domains:
                 domain = slot[0]
-                if slot[1] == "book" and slot[2] in ["day", "time", "people", "stay"]:
-                    slot_type = slot[1]+" "+slot[2]
-                    slot_val  = " ".join(slot[3:])
+                if slot[1] == "book":
+                    if len(slot) > 2 and slot[2] in ["day", "time", "people", "stay"]:
+                        slot_type = slot[1]+" "+slot[2]
+                        slots_list.append(domain+"--"+slot_type)
                 else:
                     slot_type = slot[1]
-                    slot_val  = " ".join(slot[2:])
-                if not slot_val == 'dontcare':
-                    slots_list.append(domain+"--"+slot_type+"--"+slot_val)
+                    slots_list.append(domain+"--"+slot_type)
         return slots_list
 
     def custom_evaluation(self, teacher_action: Message, labels, model_response: Message):

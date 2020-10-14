@@ -13,40 +13,37 @@ import json, random
 from parlai.core.teachers import FixedDialogTeacher
 from parlai.core.message import Message
 from parlai.core.metrics import AverageMetric
-# from .build import build
-# from .utils.trade_proc import trade_process
-from .utils.split_decoded_data import split_decoded_data
-from .utils.add_err import AddErr
+from .build import build
+from .utils.trade_proc import trade_process
+from .utils.reformat import reformat_parlai
+from .utils.data_aug import data_aug, data_scr
 
 
-
-
-class MultiWozDSTCORTeacher(FixedDialogTeacher):
+class MultiWozDSTTeacher(FixedDialogTeacher):
     """
-    MultiWOZ DST Correction Teacher.
+    MultiWOZ DST Teacher.
     """
 
     def __init__(self, opt, shared=None):
         super().__init__(opt, shared)
-        self.id = 'multiwozdst_cor'
+        self.id = 'multiwoz_dst'
 
-        # # # loading args
-        self.decode_all = opt.get('decode_dall', False)
+        # # # reading args
+        self.decode_all = opt.get('decode_all', False)
         self.just_test = opt.get('just_test', False)
-        self.repeat_minor_err = opt.get('repeat_minor_err', False)
-        self.add_err = opt.get('add_err', False)
-        self.err_data_path = opt.get('err_data_path', None)
-        self.split_decoded_data = opt.get('split_decoded_data', False)
-        self.data_name = opt.get('data_name', None)
-        self.generated_test_result_path = opt.get('generated_test_result_path', None)
         self.seed = opt.get('rand_seed', 0)
+        self.data_aug = opt.get('data_aug', False)
+        self.create_aug_data = opt.get('create_aug_data', False)
+        self.data_scr = opt.get('data_scr', False)
+        self.create_scr_data = opt.get('create_scr_data', False)
+        self.data_version = opt.get('data_version', '2.1')
+
         # # # set random seeds
         random.seed(self.seed)
 
         opt['datafile'], data_dir = self._path(opt)
-        if self.add_err:
-            self.adderr = AddErr(None, data_dir)
         self._setup_data(opt['datafile'], data_dir)
+
         self.reset()
 
     @classmethod
@@ -67,70 +64,41 @@ class MultiWozDSTCORTeacher(FixedDialogTeacher):
             help="True if one would like to test agents with small amount of data (default: False).",
         )
         agent.add_argument(
-            '--repeat_minor_err',
-            type='bool',
-            default=False,
-            help="True if one would like to repeat turns with one or two err (default: False).",
-        )
-        agent.add_argument(
-            '--err_data_path',
-            type=str,
-            default=None,
-            help="specify the data with generated errs (default: None).",
-        )
-        agent.add_argument(
-            '--split_decoded_data',
-            type='bool',
-            default=False,
-            help="True if one would like to create training data (default: False).",
-        )
-        agent.add_argument(
-            '--data_name',
-            type=str,
-            default=None,
-            help="specify the data file name (default: None).",
-        )
-        agent.add_argument(
-            '--add_err',
-            type='bool',
-            default=False,
-            help="True if one would like to create errors (default: False).",
-        )
-        agent.add_argument(
-            '--generated_test_result_path',
-            type=str,
-            default=None,
-            help="specify the data file path if iteratively correct errors (default: None).",
-        )
-        agent.add_argument(
             '--rand_seed',
             type=int,
             default=0,
             help="specify to set random seed (default: 0).",
         )
-
-    def _path(self, opt):
-        # # set up path to data (specific to each dataset)
-        data_dir = os.path.join(opt['datapath'], 'multiwozdst_cor')
-        if self.data_name is not None:
-            data_name = self.data_name
-        else:
-            data_name = 'dials_nodict_bs1.json'
-        data_path = os.path.join(data_dir, data_name)
-        if not os.path.exists(data_dir):
-            os.mkdir(data_dir)
-
-        if self.split_decoded_data:
-            # multiwoz data path
-            multiwozdst_dir = os.path.join(opt['datapath'], 'multiwoz_dst', 'MULTIWOZ2.1')
-            # generated err slots path
-            if self.err_data_path is None:
-                err_data_path = os.path.join("./experiment/gen_gpt2_nodict/", 'result_decode_all.jsonl')
-            else:
-                err_data_path = self.err_data_path
-            # # # create and split data into train, val, test set
-            split_decoded_data(data_path, multiwozdst_dir, err_data_path)
-        return data_path, data_dir
+        agent.add_argument(
+            '--data_aug',
+            type='bool',
+            default=False,
+            help="True if using augmented training (default: False).",
+        )
+        agent.add_argument(
+            '--create_aug_data',
+            type='bool',
+            default=False,
+            help="True if create augmented training data, used only during display_data(default: False).",
+        )
+        agent.add_argument(
+            '--data_scr',
+            type='bool',
+            default=False,
+            help="True if using scrambled training (default: False).",
+        )
+        agent.add_argument(
+            '--create_scr_data',
+            type='bool',
+            default=False,
+            help="True if create scrambled training data, used only during display_data(default: False).",
+        )
+        agent.add_argument(
+            '--data_version',
+            type=str,
+            default='2.1',
+            help="specify to use multiwoz 2.1 or 2.2 (default: 2.1).",
+        )
 
     def _load_txt(self, file_path):
         with open(file_path) as df:
@@ -143,7 +111,39 @@ class MultiWozDSTCORTeacher(FixedDialogTeacher):
             data = json.loads(df.read().lower())
         return data
 
-    def _setup_data(self, data_path, data_dir):
+    def _path(self, opt):
+        # set up path to data (specific to each dataset)
+        data_dir = os.path.join(opt['datapath'], 'multiwoz_dst', 'MULTIWOZ'+self.data_version)
+        # data_dir = os.path.join('/checkpoint/kunqian/multiwoz/data/MultiWOZ_2.1/')
+        if self.data_version == "2.1":
+            data_path = os.path.join(data_dir, 'data_reformat_trade_turn_sa_ha.json')
+        else:
+            data_path = os.path.join(data_dir, 'data_reformat.json')
+
+        # build the data if it does not exist
+        build(opt)
+
+        # process the data with TRADE's code, if it does not exist
+        if not os.path.exists(os.path.join(data_dir, 'dials_trade.json')) and self.data_version=='2.1':
+            trade_process(data_dir)
+
+        # reformat data for DST
+        if not os.path.exists(data_path):
+            reformat_parlai(data_dir, self.data_version)
+
+        # data augmentation
+        aug_data_path = data_path.replace(".json", "_train_aug.json")
+        if not os.path.exists(aug_data_path) or self.create_aug_data:
+            data_aug(data_path, data_dir)
+
+        # data augmentation
+        scr_data_path = data_path.replace(".json", "_train_scr.json")
+        if (self.data_scr and not os.path.exists(scr_data_path)) or self.create_scr_data:
+            data_scr(data_path, data_dir)
+
+        return data_path, data_dir
+
+    def _setup_data(self, data_path, jsons_path):
         # # # loading directly from test file or val file
         if self.decode_all:
             all_data = self._load_json(data_path)
@@ -152,28 +152,25 @@ class MultiWozDSTCORTeacher(FixedDialogTeacher):
             test_path = data_path.replace(".json", "_test.json")
             test_data = self._load_json(test_path)
             self.messages = list(test_data.values())
-            if self.generated_test_result_path is not None:
-                adderr = AddErr(None, data_dir)
-                self.messages = adderr.replace_err(self.messages, self.generated_test_result_path)
         elif self.datatype.startswith('valid'):
             valid_path = data_path.replace(".json", "_valid.json")
             valid_data = self._load_json(valid_path)
+            self.messages = list(valid_data.values())
             self.messages = random.sample(list(valid_data.values()), k=3000) # total 7374
         else:
             train_path = data_path.replace(".json", "_train.json")
-            # # # repeat turns with one/two err
-            if self.repeat_minor_err:
-                adderr = AddErr(train_path, data_dir)
-                self.messages = adderr.repeat_err()
-            # # # # manually add err following dist from err file
-            # elif self.add_err:
-            #     adderr = AddErr(train_path, data_dir)
-            #     self.messages = adderr.add_err()
-            else:
-                train_data = self._load_json(train_path)
-                self.messages = list(train_data.values())
+            if self.data_aug:
+                train_path = train_path.replace(".json", "_aug_all.json")
+            if self.data_scr:
+                train_path = train_path.replace(".json", "_scr_all.json")
+            train_data = self._load_json(train_path)
+            self.messages = list(train_data.values())
+            
+            random.shuffle(self.messages)
+        
         if self.just_test:
-            self.messages = self.messages[:200]
+            self.messages = self.messages[:10]
+
 
     def _extract_slot_from_string(self, slots_string):
         """
@@ -183,10 +180,7 @@ class MultiWozDSTCORTeacher(FixedDialogTeacher):
         ["dom--slot_type--slot_val", ... ]
         """
         domains    = ["attraction", "hotel", "hospital", "restaurant", "police", "taxi", "train"]
-        # slot_types = ['book time', 'leaveat', 'name', 'internet', 'book stay', 
-        #               'pricerange', 'arriveby', 'area', 'destination', 'day', 
-        #               'food', 'departure', 'book day', 'book people', 'department', 
-        #               'stars', 'parking', 'type']
+
         slot_types = ["stay", "price", "addr",  "type", "arrive", "day", "depart", "dest",
                     "area", "leave", "stars", "department", "people", "time", "food", 
                     "post", "phone", "name", 'internet', 'parking',
@@ -223,8 +217,6 @@ class MultiWozDSTCORTeacher(FixedDialogTeacher):
 
     def custom_evaluation(self, teacher_action: Message, labels, model_response: Message):
         resp = model_response.get('text')
-        # import pdb
-        # pdb.set_trace()
         if not resp:
             return
 
@@ -244,14 +236,8 @@ class MultiWozDSTCORTeacher(FixedDialogTeacher):
         return len(self.messages)
 
     def get(self, episode_idx, entry_idx=0):
-        # # manually add err following dist from err file
-        if self.add_err and self.datatype.startswith('train'):
-            slots_err = self.adderr.creat_err(self.messages[episode_idx]['slots_inf'])
-        else:
-            slots_err = self.messages[episode_idx]['slots_err']
-            
-        entry = self.messages[episode_idx]['context'].split("<bs>")[0]  + \
-                " <bs> " + slots_err + " </bs>"
+        # log_idx = entry_idx
+        entry = self.messages[episode_idx]['context']
         episode_done = True
         action = {
             'id': self.id,
@@ -264,7 +250,7 @@ class MultiWozDSTCORTeacher(FixedDialogTeacher):
         return action
 
 
-class DefaultTeacher(MultiWozDSTCORTeacher):
+class DefaultTeacher(MultiWozDSTTeacher):
     """
     Default teacher.
     """

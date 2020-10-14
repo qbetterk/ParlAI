@@ -28,7 +28,7 @@ class MultiWozDSTCORTeacher(FixedDialogTeacher):
 
     def __init__(self, opt, shared=None):
         super().__init__(opt, shared)
-        self.id = 'multiwozdst_cor'
+        self.id = 'multiwozdst_cor_err'
 
         # # # loading args
         self.decode_all = opt.get('decode_dall', False)
@@ -111,7 +111,7 @@ class MultiWozDSTCORTeacher(FixedDialogTeacher):
 
     def _path(self, opt):
         # # set up path to data (specific to each dataset)
-        data_dir = os.path.join(opt['datapath'], 'multiwozdst_cor')
+        data_dir = os.path.join(opt['datapath'], 'multiwozdst_cor_err')
         if self.data_name is not None:
             data_name = self.data_name
         else:
@@ -158,7 +158,8 @@ class MultiWozDSTCORTeacher(FixedDialogTeacher):
         elif self.datatype.startswith('valid'):
             valid_path = data_path.replace(".json", "_valid.json")
             valid_data = self._load_json(valid_path)
-            self.messages = random.sample(list(valid_data.values()), k=3000) # total 7374
+            self.messages = list(valid_data.values())
+            # self.messages = random.sample(list(valid_data.values()), k=4000) # total 7374
         else:
             train_path = data_path.replace(".json", "_train.json")
             # # # repeat turns with one/two err
@@ -183,10 +184,7 @@ class MultiWozDSTCORTeacher(FixedDialogTeacher):
         ["dom--slot_type--slot_val", ... ]
         """
         domains    = ["attraction", "hotel", "hospital", "restaurant", "police", "taxi", "train"]
-        # slot_types = ['book time', 'leaveat', 'name', 'internet', 'book stay', 
-        #               'pricerange', 'arriveby', 'area', 'destination', 'day', 
-        #               'food', 'departure', 'book day', 'book people', 'department', 
-        #               'stars', 'parking', 'type']
+        
         slot_types = ["stay", "price", "addr",  "type", "arrive", "day", "depart", "dest",
                     "area", "leave", "stars", "department", "people", "time", "food", 
                     "post", "phone", "name", 'internet', 'parking',
@@ -194,17 +192,12 @@ class MultiWozDSTCORTeacher(FixedDialogTeacher):
                     'pricerange', 'destination', 'leaveat', 'arriveby', 'departure']
         slots_list = []
 
-        # # # remove start and ending token
-        str_split = slots_string.strip().split()
-        if str_split != [] and str_split[0] in ["<bs>", "</bs>"]:
-            str_split = str_split[1:]
-        if "</bs>" in str_split:
-            str_split = str_split[:str_split.index("</bs>")]
-
         # # # split according to ","
-        str_split = " ".join(str_split).split(",")
-        if str_split[-1] == "":
-            str_split = str_split[:-1]
+        str_split = slots_string.split(",")
+        if "" in str_split:
+            str_split.remove("")
+        # if str_split[-1] == "":
+        #     str_split = str_split[:-1]
         str_split = [slot.strip() for slot in str_split]
 
         for slot_ in str_split:
@@ -229,12 +222,20 @@ class MultiWozDSTCORTeacher(FixedDialogTeacher):
             return
 
         # # # extract ground truth from labels
-        slots_truth = self._extract_slot_from_string(labels[0])
+        gt_err_extra = labels[0].split("<m>")[-1].split("<e>")[0].strip()
+        gt_err_miss  = labels[0].split("<m>")[-1].split("<e>")[-1].strip()
+        gt_err_extra_list = self._extract_slot_from_string(gt_err_extra)
+        gt_err_miss_list = self._extract_slot_from_string(gt_err_miss)
         
         # # # extract generated slots from model_response
-        slots_pred = self._extract_slot_from_string(resp)
+        gen_err_extra = resp.split("<m>")[-1].split("<e>")[0].strip()
+        gen_err_miss  = resp.split("<m>")[-1].split("<e>")[-1].strip()
+        gen_err_extra_list = self._extract_slot_from_string(gen_err_extra)
+        gen_err_miss_list = self._extract_slot_from_string(gen_err_miss)
 
-        self.metrics.add('joint goal acc', AverageMetric(set(slots_truth) == set(slots_pred)))
+
+        self.metrics.add('joint goal acc', AverageMetric(set(gt_err_extra_list) == set(gen_err_extra_list) and
+                                                         set(gt_err_miss_list) == set(gen_err_miss_list)))
 
     def num_examples(self):
         # each turn be seen as a individual dialog
@@ -246,18 +247,23 @@ class MultiWozDSTCORTeacher(FixedDialogTeacher):
     def get(self, episode_idx, entry_idx=0):
         # # manually add err following dist from err file
         if self.add_err and self.datatype.startswith('train'):
-            slots_err = self.adderr.creat_err(self.messages[episode_idx]['slots_inf'])
+            slots_err, miss_err, extr_err = self.adderr.creat_err(self.messages[episode_idx]['slots_inf'])
         else:
             slots_err = self.messages[episode_idx]['slots_err']
-            
+            miss_err = self.messages[episode_idx]['miss_err']
+            extr_err = self.messages[episode_idx]['extr_err']
         entry = self.messages[episode_idx]['context'].split("<bs>")[0]  + \
                 " <bs> " + slots_err + " </bs>"
+        labels = "<m> " + miss_err + " <e> " + extr_err
+
         episode_done = True
         action = {
             'id': self.id,
             'text': entry,
             'episode_done': episode_done,
-            'labels': [self.messages[episode_idx]['slots_inf']],
+            'slots_inf': self.messages[episode_idx]['slots_inf'],
+            'slots_err': slots_err,
+            'labels': [labels],
             'dial_id': self.messages[episode_idx]['dial_id'],
             'turn_num': self.messages[episode_idx]['turn_num'],
         }

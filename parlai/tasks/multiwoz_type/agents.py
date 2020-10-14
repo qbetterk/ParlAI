@@ -20,7 +20,7 @@ from .utils.reformat import reformat_parlai
 
 def _path(opt):
     # set up path to data (specific to each dataset)
-    data_dir = os.path.join(opt['datapath'], 'multiwozdst', 'MULTIWOZ2.1')
+    data_dir = os.path.join(opt['datapath'], 'multiwoz_type', 'MULTIWOZ2.1')
     # data_dir = os.path.join('/checkpoint/kunqian/multiwoz/data/MultiWOZ_2.1/')
     data_path = os.path.join(data_dir, 'data_reformat_trade_turn_sa_ha.json')
 
@@ -32,8 +32,9 @@ def _path(opt):
         trade_process(data_dir)
 
     # reformat data for DST
-    if not os.path.exists(data_path):
+    if os.path.exists(data_path):
         reformat_parlai(data_dir)
+    # reformat_parlai(data_dir, force_reformat=True)
 
     return data_path, data_dir
 
@@ -46,7 +47,7 @@ class MultiWozDSTTeacher(FixedDialogTeacher):
     def __init__(self, opt, shared=None):
         super().__init__(opt, shared)
         opt['datafile'], jsons_path = _path(opt)
-        self.id = 'multiwozdst'
+        self.id = 'multiwoz_type'
 
         # # # reading args
         self.decode_all = opt.get('decode_all', False)
@@ -127,31 +128,23 @@ class MultiWozDSTTeacher(FixedDialogTeacher):
                     'pricerange', 'destination', 'leaveat', 'arriveby', 'departure']
         slots_list = []
 
-        # # # remove start and ending token
-        str_split = slots_string.strip().split()
-        if str_split != [] and str_split[0] in ["<bs>", "</bs>"]:
-            str_split = str_split[1:]
-        if "</bs>" in str_split:
-            str_split = str_split[:str_split.index("</bs>")]
-
         # # # split according to ","
-        str_split = " ".join(str_split).split(",")
+        str_split = slots_string.strip().split(",")
         if str_split[-1] == "":
             str_split = str_split[:-1]
         str_split = [slot.strip() for slot in str_split]
 
         for slot_ in str_split:
             slot = slot_.split()
-            if len(slot) > 2 and slot[0] in domains:
+            if len(slot) > 1 and slot[0] in domains:
                 domain = slot[0]
-                if slot[1] == "book" and slot[2] in ["day", "time", "people", "stay"]:
-                    slot_type = slot[1]+" "+slot[2]
-                    slot_val  = " ".join(slot[3:])
+                if slot[1] == "book":
+                    if len(slot) > 2 and slot[2] in ["day", "time", "people", "stay"]:
+                        slot_type = slot[1]+" "+slot[2]
+                        slots_list.append(domain+"--"+slot_type)
                 else:
                     slot_type = slot[1]
-                    slot_val  = " ".join(slot[2:])
-                if not slot_val == 'dontcare':
-                    slots_list.append(domain+"--"+slot_type+"--"+slot_val)
+                    slots_list.append(domain+"--"+slot_type)
         return slots_list
 
     def custom_evaluation(self, teacher_action: Message, labels, model_response: Message):

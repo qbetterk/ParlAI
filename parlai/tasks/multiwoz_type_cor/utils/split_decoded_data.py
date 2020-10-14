@@ -17,13 +17,11 @@ class SplitDecodedData(object):
         self.val_list = self._load_txt(self.val_list_path)
         self.test_list = self._load_txt(self.test_list_path)
 
-        # # # path to store reformat and splited data
+        # # # # path to store reformat and splited data
         self.filter_type = ""
-        self.data_path = data_path
         # self.filter_type = "miss"
-        if self.filter_type != "":
-            self.data_path = data_path.replace(".json", f"_fo{self.filter_type}.json")
-        # self.data_path = data_path
+        # self.data_path = data_path.replace(".json", f"_fo{self.filter_type}.json")
+        self.data_path = data_path
         self.train_data_path = self.data_path.replace(".json", "_train.json")
         self.valid_data_path = self.data_path.replace(".json", "_valid.json")
         self.test_data_path = self.data_path.replace(".json", "_test.json")
@@ -115,7 +113,6 @@ class SplitDecodedData(object):
     def split(self):
         decoded_all_dials = self._load_list_of_json(self.decoded_data_path)
         self.dials_all, self.dials_train, self.dials_val, self.dials_test = {}, {}, {}, {}
-        self.dials_test_err = {}
         for dial in decoded_all_dials:
             if "dial_id" not in dial["dialog"][0][0]:
                 continue
@@ -125,8 +122,6 @@ class SplitDecodedData(object):
             gt_slots = dial["dialog"][0][0]['eval_labels'][0]
             gen_slots = dial["dialog"][0][1]['text']
 
-            gt_slots = gt_slots.replace(" ,", ",")
-            # pdb.set_trace()
             if dial_id not in self.test_list:
                 gt_slots, gen_slots = self._filter_err(gt_slots, gen_slots, self.filter_type)
 
@@ -141,8 +136,6 @@ class SplitDecodedData(object):
             self.dials_all[dial_id + "-" + str(turn_num)] = reformat_dial
             if dial_id in self.test_list:
                 self.dials_test[dial_id + "-" + str(turn_num)] = reformat_dial
-                if gt_slots != gen_slots:
-                    self.dials_test_err[dial_id + "-" + str(turn_num)] = reformat_dial
             elif dial_id in self.val_list:
                 self.dials_val[dial_id + "-" + str(turn_num)] = reformat_dial
             else:
@@ -158,9 +151,6 @@ class SplitDecodedData(object):
         with open(self.data_path, "w") as tf:
             json.dump(self.dials_all, tf, indent=2)
 
-        self.err_test_data_path = self.data_path.replace(".json", "_err_test.json")
-        with open(self.err_test_data_path, "w") as tf:
-            json.dump(self.dials_test_err, tf, indent=2)
 
 def split_decoded_data(data_dir, multiwozdst_dir, decoded_data_path):
     split = SplitDecodedData(data_dir, multiwozdst_dir, decoded_data_path)

@@ -5,10 +5,7 @@ import math, argparse, random, re
 import pdb
 
 DOMAINS    = ["attraction", "hotel", "hospital", "restaurant", "taxi", "train"]
-# slot_types = ['book time', 'leaveat', 'name', 'internet', 'book stay', 
-#               'pricerange', 'arriveby', 'area', 'destination', 'day', 
-#               'food', 'departure', 'book day', 'book people', 'department', 
-#               'stars', 'parking', 'type']
+
 SLOT_TYPES = ["stay", "price", "addr",  "type", "arrive", "day", "depart", "dest",
             "area", "leave", "stars", "department", "people", "time", "food", 
             "post", "phone", "name", 'internet', 'parking',
@@ -31,9 +28,9 @@ class AddErr(object):
         # setting uniform distribution
         self.uniform = True
         # number range of diff err
-        self.matched_err_num_range = 2
-        self.extra_err_num_range = 2
-        self.miss_err_num_range = 2
+        self.extra_err_num_range = [1, 1]
+        self.miss_err_num_range = [1, 1]
+        self.match_err_num_range = [1, 1]
 
     def _load_json(self, file_path):
         with open(file_path) as df:
@@ -171,15 +168,10 @@ class AddErr(object):
         self.target_dials = []
         for dial in self.dials:
             # use generated err or manually created err
-            dist = [1, 3] # [wi err, wo err]
-            if not self.uniform:
-                dist = [self.err_dist["count_err_num"]["total_turn"], self.err_dist["count_err_num"]["total_turn_num_w_err"]]
-            if random.choices([0,1], weights=dist, k=1)[0]:
-                # with err
-                dial["slots_err"] = self.creat_err(dial["slots_inf"])
-            else:
-                # without err
-                dial["slots_err"] = dial["slots_inf"]
+            slots_str, miss_err_str, extr_err_str = self.creat_err(dial["slots_inf"])
+            dial["slots_err"] = slots_str
+            dial["miss_err"]  = miss_err_str
+            dial["extra_err"] = extr_err_str
 
             self.target_dials.append(dial)
 
@@ -196,54 +188,68 @@ class AddErr(object):
         """
         slots_inf = self._extract_slot_from_string(slots_inf)
         slots_list = [slot.split("--") for slot in slots_inf]
-        # # # missing err
-        slots_list = self._create_miss_err(slots_list)
-        # # # extra err
-        slots_list = self._create_extra_err(slots_list)
-        # # # match err (replace dom/slot_type/slot_val)
-        slots_list = self._create_matched_err(slots_list)
+        miss_err_list, extr_err_list = [], []
+        dist = [1,1,0,1]
+        err_type_cands = ["miss", "match", "extra", "none"]
+        err_type = random.choices(err_type_cands, weights=dist, k=1)[0]
+        if err_type == "miss":
+            # # # missing err
+            slots_list, miss_err_list = self._create_miss_err(slots_list)
+        elif err_type == "match":
+            # # # match err
+            slots_list, miss_err_list, extr_err_list = self._create_matched_err(slots_list)
+        elif err_type == "extra":
+            # # # extra err
+            slots_list, extr_err_list = self._create_extra_err(slots_list)
+
         # # # format list into string
-        slots_str = " ".join([" ".join(slot) + "," for slot in slots_list]) if slots_list!=[] else ""
-        return slots_str
+        slots_str    = " ".join([" ".join(slot) + "," for slot in slots_list]) if slots_list!=[] else ""
+        miss_err_str = " ".join([" ".join(slot) + "," for slot in miss_err_list]) if miss_err_list!=[] else ""
+        extr_err_str = " ".join([" ".join(slot) + "," for slot in extr_err_list]) if extr_err_list!=[] else ""
+        return slots_str, miss_err_str, extr_err_str
         
     def _create_matched_err(self, slots_list):
         """
         create error by replacing domain name or slot type
-        or slot value
+        or slot value, or serval of them
         input  : slots_list = [[dom1 type1 val1], ...]
-        output : slots_list = [[dom1 type1 valx], ...]
+        output : slots_list = [[dom1 typex valx], ...]
 
         param: err num per turn
                err ratio over types(add/remove/replace) 
                err ratio over domains
         """
-
+        miss_err_list, extr_err_list = [], []
         # # # case of no slot
         if len(slots_list) == 0:
-            return slots_list
+            return slots_list, miss_err_list, extr_err_list
         # # # set match err distribution dict
         self.match_dict = self.err_dist["count_err_type"]["match"]
         # # # decide num of matched err
-        err_num_range = min(self.matched_err_num_range, len(slots_list) + 1)   # 1 ~ n + 1
-        if not err_num_range:
-            return slots_list
+        [err_num_min, err_num_max] = self.match_err_num_range
+        err_num_max = min(err_num_max, len(slots_list) + 1)
+        # no error
+        if not err_num_max:
+            return slots_list, miss_err_list, extr_err_list
 
         if self.uniform:
             dist = None
         else:
             dist = []
-            for num in range(err_num_range):
+            for num in range(err_num_min, err_num_max + 1):
                 dist.append(self.match_dict["slot_num"].get(str(len(slots_list)), {}).get(str(num), 0))
-        err_num = weighted_sample(range(err_num_range), weights=dist, k=1)[0]
+        err_num = weighted_sample(range(err_num_min, err_num_max + 1), weights=dist, k=1)[0]
         # # # choose err slot index
         err_idxs = weighted_sample(range(len(slots_list)), weights=None, k=err_num)
         # # # replace slot one by one
         for err_idx in err_idxs:
-            slots_list[err_idx] = self._replace_slot(slots_list[err_idx])
+            miss_err_list.append(slots_list[err_idx])
+            slots_list[err_idx] = self._replace_slot(slots_list, err_idx)
+            extr_err_list.append(slots_list[err_idx])
         
-        return slots_list
+        return slots_list, miss_err_list, extr_err_list
 
-    def _replace_slot(self, slot):
+    def _replace_slot(self, slots_list, err_idx):
         """
         replacing domain name or slot type or slot value
         for a single slot
@@ -251,62 +257,44 @@ class AddErr(object):
         input  : slot = [dom1 type1 val1]
         output : slot = [dom1 type1 valx]
         """
-        [dom, slot_type, slot_val] = slot
-        # choose dom or type or val to replace
-        # TODO: change prior probability to conditional prob on current
+        [dom, slot_type, slot_val] = slots_list[err_idx]
+        dom_set = set([slot[0] for slot in slots_list])
+        type_set = set([slot[1] for slot in slots_list])
+        # # # for domain
+        # keep the same domain for now
+        dom_err = dom
+
+        # do not change for domain police and hospital
+        if (dom_err not in self.ontology or
+            dom_err not in self.match_dict["slot_type"]):
+            return [dom, slot_type, slot_val]
+
+        type_candidates = set(self.ontology[dom_err].keys()) - type_set
+        type_candidates.add(slot_type)
+        type_candidates = list(type_candidates)
+        # TODO: change prior probability (freq + add-0.1) to conditional prob on current
         #  dom slot_type p(.| dom, slot_type)
         if self.uniform:
             dist = None
         else:
-            dist = [self.err_dist["count_err_type"]["overall"]["domain"],
-                    self.err_dist["count_err_type"]["overall"]["slot_type"],
-                    self.err_dist["count_err_type"]["overall"]["slot_val"]] 
-        part = weighted_sample(["domain", "slot_type", "slot_val"], weights=dist, k=1)[0]
-
-        if part == "domain":
-            # TODO: change prior probability (freq + add-one) to conditional prob on current
-            #  dom slot_type p(.| dom, slot_type)
-            if self.uniform:
-                dist = None
-            else:
-                dist = []
-                for dom_ in DOMAINS:
-                    dual_dom = "--".join(sorted([dom, dom_]))
-                    dist.append(self.match_dict.get(dual_dom, {}).get("total", 0) + 1)
-            dom_err = weighted_sample(DOMAINS, weights=dist, k=1)[0]
-            return [dom_err, slot_type, slot_val]
-
-        if part == "slot_type":
-            # do not change for domain police and hospital
-            if (dom not in self.ontology or
-                dom not in self.match_dict["slot_type"]):
-                return [dom, slot_type, slot_val]
-
-            type_candidates = list(self.ontology[dom].keys())
-            # TODO: change prior probability (freq + add-0.1) to conditional prob on current
-            #  dom slot_type p(.| dom, slot_type)
-            if self.uniform:
-                dist = None
-            else:
-                dist = []
-                for slot_type_ in type_candidates:
-                    dual_type = "--".join(sorted([slot_type, slot_type_]))
-                    dist.append(self.match_dict.get(dom, {}).get(dual_type, 0) + 0.5)
-            type_err = weighted_sample(type_candidates, weights=dist, k=1)[0]
-            return [dom, type_err, slot_val]
+            dist = []
+            for slot_type_ in type_candidates:
+                dual_type = "--".join(sorted([slot_type, slot_type_]))
+                dist.append(self.match_dict.get(dom_err, {}).get(dual_type, 0) + 0.5)
+        type_err = weighted_sample(type_candidates, weights=dist, k=1)[0]
         
-        if part == "slot_val":
-            # pdb.set_trace()
-            val_candidates = self.ontology.get(dom, {}).get(slot_type, [])
-            # if not val_candidates:
-            #     pdb.set_trace()
-            # TODO: change prior probability (uniform) to conditional prob on current
-            #  dom slot_type p(.| dom, slot_type)
-            # compute probability
-            dist = None
-            # repalce
+        val_candidates = self.ontology.get(dom_err, {}).get(type_err, [])
+        # TODO: change prior probability (uniform) to conditional prob on current
+        #  dom slot_type p(.| dom, slot_type)
+        # compute probability
+        dist = None
+        # repalce
+        if random.choice([0, 1]):
+            val_err = slot_val
+        else:
             val_err = weighted_sample(val_candidates, weights=dist, k=1)[0]
-            return [dom, slot_type, val_err]
+
+        return [dom_err, type_err, val_err]
 
     def _create_extra_err(self, slots_list):
         """
@@ -317,32 +305,39 @@ class AddErr(object):
         output : slots_list = [trip1, trip3, trip2]
         """
         self.extra_dict = self.err_dist["count_err_type"]["extra"]
-        # # # decide num of matched err, range from 0 to min(2, len(slots_list) + 1)
-        err_num_range = min(self.extra_err_num_range, len(slots_list) + 2)
-        if not err_num_range:
-            return slots_list
+        extr_err_list = []
+        # # # decide num of extra err
+        [err_num_min, err_num_max] = self.extra_err_num_range
+        if not err_num_max:
+            return slots_list, extr_err_list
 
         if self.uniform:
             dist = None
         else:
             dist = []
-            for num in range(err_num_range):
+            for num in range(err_num_min, err_num_max + 1):
                 dist.append(self.extra_dict["slot_num"].get(str(len(slots_list)), {}).get(str(num), 0))
-        err_num = weighted_sample(range(err_num_range), weights=dist, k=1)[0]
+        err_num = weighted_sample(range(err_num_min, err_num_max + 1), weights=dist, k=1)[0]
         # # # choose place index to insert err slot, range 0 ~ len(slots_list)
         dist = None
         err_idxs = weighted_sample(range(len(slots_list) + 1), weights=dist, k=err_num)
+        # # # generate extra err and insert them to slots_list and append them to extr_err_list
         for err_idx in sorted(err_idxs, reverse=True):
-            slots_list.insert(err_idx, self._generate_slot())
+            extr_slot = self._generate_slot(slots_list)
 
-        return slots_list
+            slots_list.insert(err_idx, extr_slot)
+            extr_err_list.insert(0, extr_slot)
 
-    def _generate_slot(self):
+        return slots_list, extr_err_list
+
+    def _generate_slot(self, slots_list):
         """
         generate a single slot for extra slot err
         input  : 
         output : [dom type val]
         """
+        # domains already shown up in slots_list
+        dom_list = list(set([slot[0] for slot in slots_list]))
         # # # decide domain
         if self.uniform:
             dist = None
@@ -350,7 +345,12 @@ class AddErr(object):
             dist = []
             for dom in DOMAINS:
                 dist.append(self.extra_dict.get(dom, {}).get("total", 0))
-        dom_err = weighted_sample(DOMAINS, weights=dist, k=1)[0]
+        if slots_list == []: 
+            # sample among all possible domains
+            dom_err = weighted_sample(DOMAINS, weights=dist, k=1)[0]
+        else:
+            # sample within shown up domains
+            dom_err = weighted_sample(dom_list, weights=dist, k=1)[0]
 
         # # # slot_type
         slot_type_candidates = list(self.ontology[dom_err].keys())
@@ -373,23 +373,25 @@ class AddErr(object):
         input  : slots_list = [trip1, trip2, trip3]
         output : slots_list = [trip1, trip2]
         """
+        miss_err_list = []
         # # # case of no slot
         if len(slots_list) == 0:
-            return slots_list
+            return slots_list, miss_err_list
 
         self.miss_dict = self.err_dist["count_err_type"]["miss"]
         # # # decide num of miss err
-        err_num_range = min(self.miss_err_num_range, len(slots_list) + 1)
-        if not err_num_range:
-            return slots_list
+        [err_num_min, err_num_max] = self.miss_err_num_range
+        err_num_max = min(err_num_max, len(slots_list) + 1)
+        if not err_num_max:
+            return slots_list, miss_err_list
 
         if self.uniform:
             dist = None
         else:
             dist = []
-            for num in range(err_num_range):
+            for num in range(err_num_min, err_num_max + 1):
                 dist.append(self.miss_dict["slot_num"].get(str(len(slots_list)), {}).get(str(num), 0))
-        err_num = weighted_sample(range(err_num_range), weights=dist, k=1)[0]
+        err_num = weighted_sample(range(err_num_min, err_num_max + 1), weights=dist, k=1)[0]
         # # # decide which slot to remove
         if self.uniform:
             dist = None
@@ -400,8 +402,9 @@ class AddErr(object):
         err_idxs = weighted_sample(range(len(slots_list)), weights=dist, k=err_num)
         # # # removing from end to start in list
         for err_idx in sorted(err_idxs, reverse=True):
+            miss_err_list.insert(0, slots_list[err_idx])
             del slots_list[err_idx]
-        return slots_list
+        return slots_list, miss_err_list
 
     def replace_err(self, dials_list, gen_test_result_path):
         """

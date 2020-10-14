@@ -26,7 +26,7 @@ DICT_SIZE = 400
 MAX_LENGTH = 50
 IGNORE_KEYS_IN_GOAL = ['eod', 'topic', 'messageLen', 'message']
 
-fin = open('./parlai/tasks/multiwozdst/utils/mapping.pair','r')
+fin = open('./parlai/tasks/multiwoz_dst/utils/mapping.pair','r')
 replacements = []
 for line in fin.readlines():
     tok_from, tok_to = line.replace('\n', '').split('\t')

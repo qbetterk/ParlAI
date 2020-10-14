@@ -17,13 +17,16 @@ class SplitDecodedData(object):
         self.val_list = self._load_txt(self.val_list_path)
         self.test_list = self._load_txt(self.test_list_path)
 
+        self.data_path = data_path
         # # # path to store reformat and splited data
         self.filter_type = ""
-        self.data_path = data_path
         # self.filter_type = "miss"
         if self.filter_type != "":
-            self.data_path = data_path.replace(".json", f"_fo{self.filter_type}.json")
-        # self.data_path = data_path
+            self.data_path = self.data_path.replace(".json", f"_fo{self.filter_type}.json")
+        self.keep_type = ""   # extra, miss or ""
+        if self.keep_type != "":
+            self.data_path = self.data_path.replace(".json", f"_kp{self.keep_type}.json")
+            
         self.train_data_path = self.data_path.replace(".json", "_train.json")
         self.valid_data_path = self.data_path.replace(".json", "_valid.json")
         self.test_data_path = self.data_path.replace(".json", "_test.json")
@@ -54,10 +57,6 @@ class SplitDecodedData(object):
         ["dom slot_type slot_val,", ... ]
         """
         domains    = ["attraction", "hotel", "hospital", "restaurant", "police", "taxi", "train"]
-        # slot_types = ['book time', 'leaveat', 'name', 'internet', 'book stay', 
-        #               'pricerange', 'arriveby', 'area', 'destination', 'day', 
-        #               'food', 'departure', 'book day', 'book people', 'department', 
-        #               'stars', 'parking', 'type']
         slot_types = ["stay", "price", "addr",  "type", "arrive", "day", "depart", "dest",
                     "area", "leave", "stars", "department", "people", "time", "food", 
                     "post", "phone", "name", 'internet', 'parking',
@@ -89,33 +88,36 @@ class SplitDecodedData(object):
                     slot_type = slot[1]
                     slot_val  = " ".join(slot[2:])
                 if not slot_val == 'dontcare':
-                    slots_list.append(domain+" "+slot_type+" "+slot_val+",")
+                    slots_list.append(domain+"--"+slot_type+"--"+slot_val)
         return slots_list
 
-    def _filter_err(self, gt_slots, gen_slots, filter_type=""):
+    def _teach_err(self, gt_slots, gen_slots):
         """
-        filter out missing or extra err
+        use ground truth to teach how to correct
         """
         gt_list = self._extract_slot_from_string(gt_slots)
         gen_list = self._extract_slot_from_string(gen_slots)
 
-        if filter_type == "":
-            return gt_slots, gen_slots
-        if filter_type == "extra":
-            # filter out all extra slots
-            new_gen_list = sorted(list(set(gt_list).intersection(set(gen_list))))
-            # import pdb
-            # pdb.set_trace()
-            return gt_slots, " ".join(new_gen_list)
-        if filter_type == "miss":
-            # filter out all miss slots
-            new_gt_list = sorted(list(set(gt_list).intersection(set(gen_list))))
-            return " ".join(new_gt_list), gen_slots
-        
+        # extra slots
+        extra_err_list = list(set(gen_list) - set(gt_list))
+        # miss slots
+        miss_err_list = list(set(gt_list) - set(gen_list))
+        #reformat into string
+        extra_err_str, miss_err_str = "", ""
+
+        for extra_err in extra_err_list:
+            [dom, slot_type, slot_val] = extra_err.split("--")
+            extra_err_str += f" {dom} {slot_type} is not known,"
+
+        for miss_err in miss_err_list:
+            [dom, slot_type, slot_val] = miss_err.split("--")
+            miss_err_str += f" {dom} {slot_type} is {slot_val},"
+
+        return extra_err_str, miss_err_str
+
     def split(self):
         decoded_all_dials = self._load_list_of_json(self.decoded_data_path)
         self.dials_all, self.dials_train, self.dials_val, self.dials_test = {}, {}, {}, {}
-        self.dials_test_err = {}
         for dial in decoded_all_dials:
             if "dial_id" not in dial["dialog"][0][0]:
                 continue
@@ -124,16 +126,18 @@ class SplitDecodedData(object):
             context = dial["dialog"][0][0]['text']
             gt_slots = dial["dialog"][0][0]['eval_labels'][0]
             gen_slots = dial["dialog"][0][1]['text']
+            err_slots = ""
 
-            gt_slots = gt_slots.replace(" ,", ",")
+            extra_err_str, miss_err_str = self._teach_err(gt_slots, gen_slots)
+
+            # import pdb
             # pdb.set_trace()
-            if dial_id not in self.test_list:
-                gt_slots, gen_slots = self._filter_err(gt_slots, gen_slots, self.filter_type)
-
             reformat_dial = {
                 "dial_id"   : dial_id,
                 "turn_num"  : turn_num,
                 "slots_inf" : gt_slots,
+                "miss_err"  : miss_err_str,
+                "extr_err"  : extra_err_str,
                 "slots_err" : gen_slots,
                 "context"   : context,
             }
@@ -141,8 +145,6 @@ class SplitDecodedData(object):
             self.dials_all[dial_id + "-" + str(turn_num)] = reformat_dial
             if dial_id in self.test_list:
                 self.dials_test[dial_id + "-" + str(turn_num)] = reformat_dial
-                if gt_slots != gen_slots:
-                    self.dials_test_err[dial_id + "-" + str(turn_num)] = reformat_dial
             elif dial_id in self.val_list:
                 self.dials_val[dial_id + "-" + str(turn_num)] = reformat_dial
             else:
@@ -158,9 +160,6 @@ class SplitDecodedData(object):
         with open(self.data_path, "w") as tf:
             json.dump(self.dials_all, tf, indent=2)
 
-        self.err_test_data_path = self.data_path.replace(".json", "_err_test.json")
-        with open(self.err_test_data_path, "w") as tf:
-            json.dump(self.dials_test_err, tf, indent=2)
 
 def split_decoded_data(data_dir, multiwozdst_dir, decoded_data_path):
     split = SplitDecodedData(data_dir, multiwozdst_dir, decoded_data_path)

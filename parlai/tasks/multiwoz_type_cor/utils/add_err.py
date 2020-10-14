@@ -31,9 +31,9 @@ class AddErr(object):
         # setting uniform distribution
         self.uniform = True
         # number range of diff err
-        self.matched_err_num_range = 2
-        self.extra_err_num_range = 2
-        self.miss_err_num_range = 2
+        self.matched_err_num_range = 3
+        self.extra_err_num_range = 4
+        self.miss_err_num_range = 4
 
     def _load_json(self, file_path):
         with open(file_path) as df:
@@ -171,7 +171,7 @@ class AddErr(object):
         self.target_dials = []
         for dial in self.dials:
             # use generated err or manually created err
-            dist = [1, 3] # [wi err, wo err]
+            dist = [0, 3] # [wi err, wo err]
             if not self.uniform:
                 dist = [self.err_dist["count_err_num"]["total_turn"], self.err_dist["count_err_num"]["total_turn_num_w_err"]]
             if random.choices([0,1], weights=dist, k=1)[0]:
@@ -203,7 +203,7 @@ class AddErr(object):
         # # # match err (replace dom/slot_type/slot_val)
         slots_list = self._create_matched_err(slots_list)
         # # # format list into string
-        slots_str = " ".join([" ".join(slot) + "," for slot in slots_list]) if slots_list!=[] else ""
+        slots_str = ", ".join([" ".join(slot) for slot in slots_list]) if slots_list!=[] else ""
         return slots_str
         
     def _create_matched_err(self, slots_list):
@@ -330,7 +330,7 @@ class AddErr(object):
                 dist.append(self.extra_dict["slot_num"].get(str(len(slots_list)), {}).get(str(num), 0))
         err_num = weighted_sample(range(err_num_range), weights=dist, k=1)[0]
         # # # choose place index to insert err slot, range 0 ~ len(slots_list)
-        dist = None
+        d = None
         err_idxs = weighted_sample(range(len(slots_list) + 1), weights=dist, k=err_num)
         for err_idx in sorted(err_idxs, reverse=True):
             slots_list.insert(err_idx, self._generate_slot())
