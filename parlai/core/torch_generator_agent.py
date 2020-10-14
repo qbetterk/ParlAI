@@ -30,6 +30,7 @@ from parlai.core.opt import Opt
 from parlai.utils.distributed import is_distributed, sync_parameters
 from parlai.core.torch_agent import TorchAgent, Batch, Output, DictionaryAgent
 from parlai.utils.misc import warn_once
+from parlai.utils.io import PathManager
 import parlai.utils.logging as logging
 from parlai.core.metrics import (
     Metric,
@@ -504,7 +505,9 @@ class TorchGeneratorAgent(TorchAgent, ABC):
                 )
             if self.use_cuda:
                 if self.model_parallel:
-                    self.model = PipelineHelper().make_parallel(self.model)
+                    ph = PipelineHelper()
+                    ph.check_compatibility(self.opt)
+                    self.model = ph.make_parallel(self.model)
                 else:
                     self.model.cuda()
                 self.criterion.cuda()
@@ -656,10 +659,6 @@ class TorchGeneratorAgent(TorchAgent, ABC):
         shared['beam_block_list'] = self.beam_block_list
         if hasattr(self, 'optimizer'):
             shared['optimizer'] = self.optimizer
-        if self.opt.get('numthreads', 1) > 1:
-            shared['states'] = {  # don't share optimizer states
-                'optimizer_type': self.opt['optimizer']
-            }
         return shared
 
     def vectorize(self, *args, **kwargs):
@@ -890,9 +889,20 @@ class TorchGeneratorAgent(TorchAgent, ABC):
             warn_once("--skip-generation true produces limited metrics")
         else:
             maxlen = self.label_truncate or 256
-            beam_preds_scores, _ = self._generate(batch, self.beam_size, maxlen)
+            beam_preds_scores, beams = self._generate(batch, self.beam_size, maxlen)
             preds, scores = zip(*beam_preds_scores)
             self._add_generation_metrics(batch, preds)
+
+            # bsz x beamsize
+            beam_texts: List[List[Tuple[str, float]]] = []
+            for beam in beams:
+                beam_texts.append([])
+                for tokens, score in beam.get_rescored_finished():
+                    try:
+                        beam_texts[-1].append((self._v2t(tokens), score.item()))
+                    except KeyError:
+                        logging.error("Decoding error: %s", tokens)
+                        continue
 
         cand_choices = None
         # TODO: abstract out the scoring here
@@ -922,7 +932,10 @@ class TorchGeneratorAgent(TorchAgent, ABC):
             # compute additional bleu scores
             self._compute_fairseq_bleu(batch, preds)
             self._compute_nltk_bleu(batch, text)
-        return Output(text, cand_choices, token_losses=token_losses)
+        retval = Output(text, cand_choices, token_losses=token_losses)
+        if not self.skip_generation:
+            retval.beam_texts = beam_texts
+        return retval
 
     def _treesearch_factory(self, device):
         method = self.opt.get('inference', 'greedy')
@@ -1003,8 +1016,8 @@ class TorchGeneratorAgent(TorchAgent, ABC):
         ctxt = batch.text_vec[batch_idx]
         if self.beam_block_full_context:
             full_ctxt = batch.observations[batch_idx].get('full_text_vec', ctxt)
-            if not isinstance(full_ctxt, torch.LongTensor):
-                full_ctxt = torch.LongTensor(full_ctxt).to(ctxt)
+            if not isinstance(full_ctxt, torch.Tensor):
+                full_ctxt = torch.LongTensor(full_ctxt).to(ctxt.device)
             ctxt = full_ctxt
         return ctxt
 
@@ -1025,9 +1038,7 @@ class TorchGeneratorAgent(TorchAgent, ABC):
             initial input for the decoder
         """
         return (
-            torch.LongTensor(  # type: ignore
-                [self.START_IDX]
-            )
+            torch.LongTensor([self.START_IDX])  # type: ignore
             .expand(bsz * beam_size, 1)
             .to(dev)
         )
@@ -1173,12 +1184,6 @@ class TorchGeneratorAgent(TorchAgent, ABC):
 
         # get the top prediction for each beam (i.e. minibatch sample)
         beam_preds_scores = [n_best_list[0] for n_best_list in n_best_beam_preds_scores]
-        if self.opt.get('verbose'):
-            for i, beams in enumerate(n_best_beam_preds_scores):
-                for b, (tokens, score) in enumerate(beams):
-                    gen = self._v2t(tokens)
-                    logging.debug(f"Batch[{i:3d}] Beam[{b:3d}]: ({score:4.2f}): {gen}")
-                logging.debug('-')
 
         return beam_preds_scores, beams
 
@@ -1194,7 +1199,7 @@ class TorchGeneratorAgent(TorchAgent, ABC):
 
         block_list_fn = self.opt['beam_block_list_filename']
         try:
-            with open(block_list_fn) as f:
+            with PathManager.open(block_list_fn) as f:
                 for line in f:
                     block_list.add(line.strip())
         except IOError:

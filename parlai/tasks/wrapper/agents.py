@@ -60,6 +60,8 @@ class AbstractWrapperTeacher(Teacher, ABC):
     def act(self):
         """
         Act on the previous observation.
+
+        Typically, self.task.act() will need to be called in this method.
         """
         raise NotImplementedError('Abstract class: user must implement act() method')
 
@@ -122,15 +124,6 @@ class AbstractWrapperTeacher(Teacher, ABC):
         shared['opt'] = self.opt
         shared['task'] = self.task.share()
         return shared
-
-    def shutdown(self):
-        """
-        Shutdown the subtask.
-        """
-        self.task.shutdown()
-
-    def update_counters(self):
-        self.task.update_counters()
 
 
 class LabelToTextTeacher(AbstractWrapperTeacher):
