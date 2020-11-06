@@ -275,6 +275,7 @@ class Reformat_Multiwoz(object):
             ...
             }
         """
+        self.reformat_data_path = self.reformat_data_path.replace(".json", "_filtername.json")
         self.data_trade_proc_path = os.path.join(self.data_dir, "dials_trade.json")
         self.load_dials(data_path = self.data_trade_proc_path)
         self.dials_form = {}
@@ -356,13 +357,16 @@ class Reformat_Multiwoz(object):
 
                 turn_form["context"] = " ".join(context)
 
-                self.dials_form[dial["dialogue_idx"] + "-" + str(turn_form["turn_num"])] = turn_form
-                if dial["dialogue_idx"] in self.test_list:
-                    self.dials_test[dial["dialogue_idx"] + "-" + str(turn_form["turn_num"])] = turn_form
-                elif dial["dialogue_idx"] in self.val_list:
-                    self.dials_val[dial["dialogue_idx"] + "-" + str(turn_form["turn_num"])] = turn_form
-                else:
-                    self.dials_train[dial["dialogue_idx"] + "-" + str(turn_form["turn_num"])] = turn_form
+                if "restaurant name" in turn_form["slots_inf"] or \
+                    "attraction name" in turn_form["slots_inf"] or \
+                        "hotel name" in turn_form["slots_inf"]:
+                    self.dials_form[dial["dialogue_idx"] + "-" + str(turn_form["turn_num"])] = turn_form
+                    if dial["dialogue_idx"] in self.test_list:
+                        self.dials_test[dial["dialogue_idx"] + "-" + str(turn_form["turn_num"])] = turn_form
+                    elif dial["dialogue_idx"] in self.val_list:
+                        self.dials_val[dial["dialogue_idx"] + "-" + str(turn_form["turn_num"])] = turn_form
+                    else:
+                        self.dials_train[dial["dialogue_idx"] + "-" + str(turn_form["turn_num"])] = turn_form
 
         self.reformat_train_data_path = self.reformat_data_path.replace(".json", "_train.json")
         self.reformat_valid_data_path = self.reformat_data_path.replace(".json", "_valid.json")
@@ -436,16 +440,7 @@ class Reformat_Multiwoz(object):
 
 
 def reformat_parlai(data_dir, data_version, force_reformat=False):
-    # # args = Parse_args()
-    # # args.data_dir = data_dir
-    # if os.path.exists(os.path.join(data_dir, 'data_reformat_trade_turn_sa_ha.json')) and \
-    #    os.path.exists(os.path.join(data_dir, 'data_reformat_trade_turn_sa_ha_train.json')) and \
-    #    os.path.exists(os.path.join(data_dir, 'data_reformat_trade_turn_sa_ha_valid.json')) and \
-    #    os.path.exists(os.path.join(data_dir, 'data_reformat_trade_turn_sa_ha_test.json')) and \
-    #    not force_reformat:
-    #     pass
-    #     # print("already reformat data before, skipping this time ...")
-    # else:
+    
     reformat = Reformat_Multiwoz(data_dir)
 
     if data_version == "2.1":

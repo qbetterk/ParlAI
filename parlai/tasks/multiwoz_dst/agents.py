@@ -117,6 +117,7 @@ class MultiWozDSTTeacher(FixedDialogTeacher):
         # data_dir = os.path.join('/checkpoint/kunqian/multiwoz/data/MultiWOZ_2.1/')
         if self.data_version == "2.1":
             data_path = os.path.join(data_dir, 'data_reformat_trade_turn_sa_ha.json')
+            # data_path = os.path.join(data_dir, 'data_reformat_filtername.json')
         else:
             data_path = os.path.join(data_dir, 'data_reformat.json')
 
@@ -124,7 +125,7 @@ class MultiWozDSTTeacher(FixedDialogTeacher):
         build(opt)
 
         # process the data with TRADE's code, if it does not exist
-        if not os.path.exists(os.path.join(data_dir, 'dials_trade.json')) and self.data_version=='2.1':
+        if not os.path.exists(os.path.join(data_dir, 'dials_trade.json')) and self.data_version == '2.1':
             trade_process(data_dir)
 
         # reformat data for DST
