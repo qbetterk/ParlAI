@@ -118,8 +118,10 @@ class MultiWozDSTTeacher(FixedDialogTeacher):
         if self.data_version == "2.1":
             data_path = os.path.join(data_dir, 'data_reformat_trade_turn_sa_ha.json')
             # data_path = os.path.join(data_dir, 'data_reformat_filtername.json')
-        else:
+        elif self.data_version == "2.2":
             data_path = os.path.join(data_dir, 'data_reformat.json')
+        elif self.data_version == "2.3":
+            data_path = os.path.join(data_dir, 'modify_data_reformat.json')
 
         # build the data if it does not exist
         build(opt)
