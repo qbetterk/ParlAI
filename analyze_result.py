@@ -4,6 +4,8 @@ import os, sys, json
 import math
 import pdb
 from collections import defaultdict, OrderedDict
+	
+from fuzzywuzzy import fuzz
 
 domains = ["attraction", "hotel", "hospital", "restaurant", "police", "taxi", "train"]
 slot_types = ["stay", "price", "addr", "type", "arrive", "day", "depart", "dest",
@@ -40,7 +42,7 @@ class Clean_Analyze_result(object):
                 data.append(json.loads(line))
         return data
 
-    def _extract_slot_from_string(self, slots_string):
+    def _extract_slot_from_string(self, slots_string, context=None):
         """
         Either ground truth or generated result should be in the format:
         "dom slot_type slot_val, dom slot_type slot_val, ..., dom slot_type slot_val,"
@@ -78,11 +80,21 @@ class Clean_Analyze_result(object):
                 else:
                     slot_type = slot[1]
                     slot_val  = " ".join(slot[2:])
-                if not slot_val == 'dontcare':
+                # if context is not None and slot_type != "internet" and slot_type != "parking" and slot_val not in context:
+                #     continue
+                # if slot_type == "leaveat" or slot_type == "arriveby":
+                #     continue
+                # if slot_type == "type":
+                #     continue
+                # if slot_val.split()[0] == "the":
+                #     slot_val = " ".join(slot_val.split()[1:])
+                # if "|" in slot_val:
+                #     continue
+                if not slot_val == 'dontcare':# and slot_type != "departure" and slot_type != "destination":
                     slots_list.append(domain+"--"+slot_type+"--"+slot_val)
         return slots_list
 
-    def clean(self, raw_result=None, save_clean_result=False, save_clean_path=None, accm=0, replace_truth=0, order='dtv', save_err=False):
+    def clean(self, raw_result=None, save_clean_result=False, save_clean_path=None, accm=0, replace_truth=0, truth_path=None, order='dtv', save_err=False):
         """
         format raw_result (string of slots) into triplets
         input : [
@@ -102,19 +114,25 @@ class Clean_Analyze_result(object):
 
         if replace_truth:
             data_path = '/checkpoint/kunqian/multiwoz/data/MultiWOZ_2.1/data_reformat_slot_accm_hist_accm.json'
+            if truth_path is not None:
+                data_path = truth_path
             with open(data_path) as df:
                 ori_data = json.loads(df.read().lower())
 
         self.err = {}
         self.result_clean = {}
+        count = defaultdict(int)
         for dial in raw_result:
             if "dial_id" not in dial["dialog"][0][0]:
                 continue
             dial_id = dial["dialog"][0][0]['dial_id']
             turn_num = dial["dialog"][0][0]['turn_num']
             context = dial["dialog"][0][0]['text']
-            gt_slots = dial["dialog"][0][0]['eval_labels'][0]
             gen_slots = dial["dialog"][0][1]['text']
+            if not replace_truth:
+                gt_slots = dial["dialog"][0][0]['eval_labels'][0]
+            else:
+                gt_slots = ori_data[f"{dial_id}-{turn_num}"]["slots_inf"]
 
             if dial_id not in self.result_clean:
                 self.result_clean[dial_id] = {}
@@ -122,58 +140,30 @@ class Clean_Analyze_result(object):
                 self.result_clean[dial_id][turn_num] = {}
 
             # # # reformat ground truth
-            slots_truth = []
-                    
-            oracle = gt_slots.split(",")
-            if oracle[-1] == "":
-                oracle = oracle[:-1]
-            oracle = [slot.strip() for slot in oracle]
+            slots_truth = self._extract_slot_from_string(gt_slots, context)
 
-            for slot_ in oracle:
-                slot = slot_.split()
-                if order == 'dtv':
-                    if len(slot) > 1 and slot[0] in domains:
-                        domain = slot[0]
-                        if slot[1] == "book" and slot[2] in ["day", "time", "people", "stay"]:
-                            slot_type = slot[1]+" "+slot[2]
-                            slot_val  = " ".join(slot[3:])
-                        else:
-                            slot_type = slot[1]
-                            slot_val  = " ".join(slot[2:])
-                        if not slot_val == 'dontcare':
-                            slots_truth.append(domain+"--"+slot_type+"--"+slot_val)
-                        # slots_truth.append(domain+"--"+slot_type+"--"+slot_val)
-                    # else:
-                    #     # pmul4204.json turn 5,6 slot: "15" from train set
-                    #     # pdb.set_trace()
+            # # # # reformat generated slots
+            slots_pred = self._extract_slot_from_string(gen_slots, context)
 
-            if dial_id not in self.result_clean:
-                pdb.set_trace()
-
-            # # # reformat generated slots
-            slots_pred = []
-
-            predic = gen_slots.split(",")
-            if predic[-1] == "":
-                predic = predic[:-1]
-            predic = [slot.strip() for slot in predic]
-
-            for slot_ in predic:
-                slot = slot_.split()
-                if order == 'dtv':
-                    if len(slot) > 1 and slot[0] in domains:
-                        domain = slot[0]
-                        if slot[1] == "book" and slot[2] in ["day", "time", "people", "stay"]:
-                            slot_type = slot[1]+" "+slot[2]
-                            slot_val  = " ".join(slot[3:])
-                        else:
-                            slot_type = slot[1]
-                            slot_val  = " ".join(slot[2:])
-                        if not slot_val == 'dontcare':
-                            slots_pred.append(domain+"--"+slot_type+"--"+slot_val)
-                        # slots_pred.append(domain+"--"+slot_type+"--"+slot_val)
-                    # else:
-                    #     pdb.set_trace()
+            # # # fuzzy match
+            for idx in range(len(slots_pred)):
+                slot_pred = slots_pred[idx]
+                dom_type_pred = "--".join(slot_pred.split("--")[:2])
+                slot_val_pred = slot_pred.split("--")[-1]
+                for slot_truth in slots_truth:
+                    dom_type_truth = "--".join(slot_truth.split("--")[:2])
+                    slot_val_truth = slot_truth.split("--")[-1]
+                    if dom_type_pred == dom_type_truth and slot_val_pred != slot_val_truth:
+                        if fuzz.partial_ratio(slot_val_pred, slot_val_truth) >= 90 \
+                            and len(slot_val_pred.split("|")) == len(slot_val_truth.split("|")):
+                            # print(slot_pred)
+                            # print(slot_truth)
+                            # pdb.set_trace()
+                            count[dom_type_pred] += 1
+                            slots_pred[idx] = slot_truth
+                            # pdb.set_trace()
+                            break
+            # # print(count)
 
             self.result_clean[dial_id][turn_num]["ground_truth"] = sorted(list(set(slots_truth)))
             self.result_clean[dial_id][turn_num]["generated_seq"] = sorted(list(set(slots_pred)))
@@ -194,6 +184,9 @@ class Clean_Analyze_result(object):
                     "extr_err" : ", ".join(extr_err),
                     "oracle_s" : ", ".join(sorted(list(set(slots_truth)))),
                 }
+
+        # for dom_type in count:
+        #     print(dom_type+": "+str(count[dom_type]))
 
         if save_err:
             with open(self.err_result_path, "w") as ef:
@@ -726,7 +719,7 @@ class Clean_Analyze_result(object):
                 "match" : {
                     "domain"    : {},  # dom1-dom2-slot_type
                     "slot_type" : {},  # dom-slot_type1-slot_typ2
-                    "slot_val"  : {},
+                    "slot_val"  : {"dom_type":defaultdict(int),},
                     "slot_num"  : {},
                     },
                 "extra" : {
@@ -749,18 +742,6 @@ class Clean_Analyze_result(object):
                 stats["overall"]["extra_slot_num"] += len(extra_predict)
                 stats["overall"]["miss_slot_num"] += len(miss_predict)
 
-                if len(turn["ground_truth"]) not in stats["extra"]["slot_num"]:
-                    stats["extra"]["slot_num"][len(turn["ground_truth"])] = defaultdict(int)
-                stats["extra"]["slot_num"][len(turn["ground_truth"])][len(extra_predict)] += 1
-                if len(turn["ground_truth"]) not in stats["miss"]["slot_num"]:
-                    stats["miss"]["slot_num"][len(turn["ground_truth"])] = defaultdict(int)
-                stats["miss"]["slot_num"][len(turn["ground_truth"])][len(miss_predict)] += 1
-                if len(turn["ground_truth"]) not in stats["match"]["slot_num"]:
-                    stats["match"]["slot_num"][len(turn["ground_truth"])] = defaultdict(int)
-                if len(extra_predict) == 0 or len(miss_predict) == 0:
-                    stats["match"]["slot_num"][len(turn["ground_truth"])]["0"] += 1
-                    # continue
-
                 matched_slot = []
                 for extra_slot in extra_predict_split:
                     match_flag = 0
@@ -777,6 +758,7 @@ class Clean_Analyze_result(object):
                                     stats["match"]["slot_val"][extra_slot[0]][extra_slot[1]] = 0
                                 stats["match"]["slot_val"][extra_slot[0]][extra_slot[1]] += 1
                                 stats["match"]["slot_val"][extra_slot[0]]["total"] += 1
+                                stats["match"]["slot_val"]["dom_type"][extra_slot[0]+"_"+extra_slot[1]] += 1
                                 # saving
                                 if miss_slot not in matched_slot:
                                     matched_slot.append(miss_slot)
@@ -853,37 +835,22 @@ class Clean_Analyze_result(object):
                                 "tru_slot"  : ", ".join(sorted(turn["ground_truth"]))
                         })
 
-                    # # # for unmatched extra slots
-                    if extra_slot[0] not in stats["extra"]:
-                        stats["extra"][extra_slot[0]] = {"total" : 0, extra_slot[1] : 0}
-                    elif extra_slot[1] not in stats["extra"][extra_slot[0]]:
-                        stats["extra"][extra_slot[0]][extra_slot[1]] = 0
-                    stats["extra"][extra_slot[0]][extra_slot[1]] += 1
-                    stats["extra"][extra_slot[0]]["total"] += 1
+                    # # # # for unmatched extra slots
+                    # if extra_slot[0] not in stats["extra"]:
+                    #     stats["extra"][extra_slot[0]] = {"total" : 0, extra_slot[1] : 0}
+                    # elif extra_slot[1] not in stats["extra"][extra_slot[0]]:
+                    #     stats["extra"][extra_slot[0]][extra_slot[1]] = 0
+                    # stats["extra"][extra_slot[0]][extra_slot[1]] += 1
+                    # stats["extra"][extra_slot[0]]["total"] += 1
 
-                    if extra_slot[0] == "train" and extra_slot[1] == "leaveat":
-                        stats["extra"]["taxi--departure"][extra_slot[2]] += 1
 
                 # # # for unmatched miss slots
                 for miss_slot in miss_predict_split:
                     stats["miss"]["slot_type"][miss_slot[0] + "--" + miss_slot[1]] += 1
-                    # if miss_slot not in matched_slot:
-                    if miss_slot[0] not in stats["miss"]:
-                        stats["miss"][miss_slot[0]] = {"total" : 0, miss_slot[1] : 0}
-                    elif miss_slot[1] not in stats["miss"][miss_slot[0]]:
-                        stats["miss"][miss_slot[0]][miss_slot[1]] = 0
-                    stats["miss"][miss_slot[0]][miss_slot[1]] += 1
-                    stats["miss"][miss_slot[0]]["total"] += 1
-
-                    if miss_slot[0] == "train" and miss_slot[1] == "leaveat":
-                        stats["miss"]["taxi--departure"][miss_slot[2]] += 1
-
-                stats["match"]["slot_num"][len(turn["ground_truth"])][len(matched_slot)] += 1
-
-        # with open(extra_slot_path, 'w') as tf:
-        #     json.dump(extra_slot_turn, tf, indent = 2)
+                    
         stats["miss"]["slot_type"] = OrderedDict(sorted(stats["miss"]["slot_type"].items(), key=lambda t: t[0]))
         stats["extra"]["slot_type"] = OrderedDict(sorted(stats["extra"]["slot_type"].items(), key=lambda t: t[0]))
+        stats["match"]["slot_val"]["dom_type"] = OrderedDict(sorted(stats["match"]["slot_val"]["dom_type"].items(), key=lambda t: t[0]))
 
         stats["extra"]["taxi--departure"] = OrderedDict(sorted(stats["extra"]["taxi--departure"].items(), key=lambda t: t[1], reverse=True))
         stats["miss"]["taxi--departure"] = OrderedDict(sorted(stats["miss"]["taxi--departure"].items(), key=lambda t: t[1], reverse=True))
@@ -1123,6 +1090,7 @@ class Clean_Analyze_result(object):
                 "attraction": {"dom":defaultdict(int), "val":defaultdict(int), "other":defaultdict(int)}, 
                 "hotel"     : {"dom":defaultdict(int), "val":defaultdict(int), "other":defaultdict(int)}, 
                 "restaurant": {"dom":defaultdict(int), "val":defaultdict(int), "other":defaultdict(int)}, 
+                "taxi": {"dom":defaultdict(int), "val":defaultdict(int), "other":defaultdict(int)}, 
                 }
             }
         for dial_id, dial in clean_result.items():
@@ -1379,7 +1347,7 @@ def main():
     # path = "./experiment/gen_gpt2_nodict/result_decode_all_bs8.jsonl"
     # path = "./experiment/gen_gpt2_nodict/result_decode_all.jsonl"
     # path = "./experiment/gen_gpt2_nodict/result_test_ep8.jsonl"                       # 0.5567
-    path = "./experiment/gen_gpt2_nodict/result_test.jsonl"                       # 0.5567
+    # path = "./experiment/gen_gpt2_nodict/result_test.jsonl"                       # 0.5567
     # path = "./experiment/gen_gpt2_nodict/result_valid.jsonl"                       # 0.5567
     # # path = "./experiment/cor_gpt2_nod_gen_errbs1_fomi/result_test_ep5.jsonl"    # 0.5570
     # # path = "./experiment/cor_gpt2_nod_gen_errbs1_foex/result_test_ep4.jsonl"    # 0.5542
@@ -1436,7 +1404,6 @@ def main():
     # path = "./experiment/cor_gpt2_nod_fresh_fom_kpe/result_test.jsonl"     # 0.5582
     # path = "./experiment/cor_gpt2_nod_fresh_rand22/result_test_bs1.jsonl"     # 0.3574
     # path = "./experiment/cor_gpt2_nod_fresh_rand1101/result_test.jsonl"     # 0.5394
-    # path = "./experiment/cor_gpt2_nod_fresh_rand1101/result_test.jsonl"     # 0.5394
 
 
     # path = "./experiment/gen_gpt2_nodict_aug_sd0/result_test.jsonl"                       # 
@@ -1445,20 +1412,35 @@ def main():
     # path = "./experiment/gen_gpt2_nodict_aug_all_sd2/result_test.jsonl"                       # 
     # path = "./experiment/gen_gpt2_nodict_aug_all_sd1/result_test.jsonl"                       # 
     # path = "./experiment/gen_gpt2_nodict_aug_all_sd0/result_test.jsonl"                       # 
-    # path = "./experiment/gen_gpt2_nodict_m22_sd0/result_test.jsonl"                       # 
+    # # path = "./experiment/gen_gpt2_filtername/result_test.jsonl"                       # 0.4559 / 0.5524
 
-    path = "./experiment/gen_gpt2_nodict_scr_sd0/result_test.jsonl" 
-    path = "./experiment/gen_gpt2_nodict_scr_all_sd0/result_test.jsonl"                       # 
+    # path = "./experiment/gen_gpt2_nodict_scr_sd0/result_test.jsonl" 
+    # path = "./experiment/gen_gpt2_nodict_scr_all_sd0/result_test.jsonl"                       # 
     
+    # path = "./experiment/gen_gpt2_nodict/result_test.jsonl"                       # 0.5567 / 0.9707 / 0.5632 /0.9717
+    # path = "./experiment/gen_gpt2_nodict_sd0/result_test.jsonl"                       # 0.5459 / 0.9693 / 0.5506 / 0.9701
+    # path = "./experiment/gen_gpt2_nodict_sd1/result_test.jsonl"                       # 0.5366 / 0.9690 / 0.5412 / 0.9696
+    # path = "./experiment/gen_gpt2_nodict_sd2/result_test.jsonl"                       # 0.5378 / 0.9680 / 0.5422 / 0.9688
+
+    path = "./experiment/gen_gpt2_nodict_m22_sd0/result_test.jsonl"                       # 0.5530 / 0.9702 / 0.5649 / 0.9718
+    path = "./experiment/gen_gpt2_nodict_m22_sd1/result_test.jsonl"                       # 0.5447 / 0.9702 / 0.5504 / 0.9692
+    path = "./experiment/gen_gpt2_nodict_m22_sd2/result_test.jsonl"                       # 0.5103 / 0.9663 / 0.5162 / 0.9669
+
+    # path = "./experiment/gen_gpt2_m23_sd0/result_test.jsonl"                       # 0.6207 0.6474
+    # path = "./experiment/gen_gpt2_m23_sd3/result_test.jsonl"                       # 0.6224  /0.6521
+    # path = "./experiment/gen_gpt2_m23_sd2/result_test.jsonl"                       # 0.6149 / 0.6448
+
+
     clean_analyze_result = Clean_Analyze_result(path_result=path)
 
-    clean_analyze_result.clean(save_clean_result=False, save_err=True)
+    truth_path = "./data/multiwoz_dst/MULTIWOZ2.3/modify_data_reformat_test.json"
+    clean_analyze_result.clean(save_clean_result=True, save_err=True, replace_truth=False, truth_path=truth_path)
     # clean_analyze_result.clean_err(save_clean_result=False)
     # clean_analyze_result.clean_all_type_seq(save_clean_result=False)
     # clean_analyze_result.clean_all_type_sep(save_clean_result=False)
 
     clean_analyze_result.compute_metrics()
-    clean_analyze_result.analyze()
+    # clean_analyze_result.analyze()
 
     # mean, dev = mean_and_dev([56.17, 55.40, 55.95])
     # mean, dev = mean_and_dev([55.67, 51.62, 49.92])
