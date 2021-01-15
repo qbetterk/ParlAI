@@ -14,6 +14,7 @@ from parlai.core.teachers import FixedDialogTeacher
 from parlai.core.message import Message
 from parlai.core.metrics import AverageMetric
 from parlai.core.params import ParlaiParser
+from parlai.core.opt import Opt
 from typing import TypeVar, List, Dict, Optional, Tuple, Set, Iterable
 from .build import build
 from .utils.trade_proc import trade_process
