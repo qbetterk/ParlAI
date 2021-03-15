@@ -86,8 +86,8 @@ Though pip install command is easier, it would not give you access to the ready 
  - [Plug into Facebook Messenger](https://parl.ai/docs/tutorial_chat_service.html)
 
 
-## Examples
-To modify the Multiwoz2.2 and generate the new 2.2+ version:
+## MultiWOZ2.2+
+To modify the MultiWOZ2.2 and generate the new 2.2+ version:
 ```bash
 parlai analyze_multiwoz.py
 ```
