@@ -64,20 +64,25 @@ random.seed(0)
 class Modify_Multiwoz(object):
     def __init__(self, data_path=None, mode="train"):
         self.mode = mode
+        self.old_data_dir = "./data/multiwoz_dst/MULTIWOZ2.2"
         self.data_path = (
-            f"./data/multiwoz_dst/MULTIWOZ2.2/data_reformat_{self.mode}.json"
+            f"{self.new_data_dir}/data_reformat_{self.mode}.json"
         )
         # accumulated slots and dialog history
+        self.new_data_dir = "./data/multiwoz_dst/MULTIWOZ2.2+"
+        if not os.path.exists(self.new_data_dir):
+            os.mkdir(self.new_data_dir)
+
         self.new_data_path = (
-            f"./data/multiwoz_dst/MULTIWOZ2.3/modify_data_reformat_{self.mode}.json"
+            f"{self.new_data_dir}/modify_data_reformat_{self.mode}.json"
         )
 
         # non-accumulated slots
         self.new_data_path2 = (
-            f"./data/multiwoz_dst/MULTIWOZ2.3/modify_sig_data_reformat_{self.mode}.json"
+            f"{self.new_data_dir}/modify_sig_data_reformat_{self.mode}.json"
         )
 
-        self.otgy_path = "./data/multiwoz_dst/MULTIWOZ2.2/otgy.json"
+        self.otgy_path = f"{self.new_data_dir}/otgy.json"
 
 
 
@@ -132,10 +137,10 @@ class Modify_Multiwoz(object):
         for mode in ["train", "valid", "test"]:
             self.mode = mode
             self.data_path = (
-                f"./data/multiwoz_dst/MULTIWOZ2.2/data_reformat_{self.mode}.json"
+                f"{self.new_data_dir}/data_reformat_{self.mode}.json"
             )
             self.new_data_path = (
-                f"./data/multiwoz_dst/MULTIWOZ2.3/modify_data_reformat_{self.mode}.json"
+                f"{self.new_data_dir}/modify_data_reformat_{self.mode}.json"
             )
             # load data from 2.2
             self._load_data()
@@ -144,7 +149,7 @@ class Modify_Multiwoz(object):
             modify_dialog_path_list = []
             for domain in DOMAINS:
                 for slot_type in SLOT_TYPES_v22:
-                    modify_dialog_path = f"./data/multiwoz_dst/MULTIWOZ2.2/data_reformat_{self.mode}_{domain}_{slot_type}.json"
+                    modify_dialog_path = f"{self.new_data_dir}/data_reformat_{self.mode}_{domain}_{slot_type}.json"
                     if os.path.exists(modify_dialog_path):
                         modify_dialog_path_list.append(modify_dialog_path)
 
@@ -214,11 +219,11 @@ class Modify_Multiwoz(object):
         for mode in ["train", "valid", "test"]:
             self.mode = mode
             self.data_path = (
-                f"./data/multiwoz_dst/MULTIWOZ2.2/data_reformat_{self.mode}.json"
+                f"{self.new_data_dir}/data_reformat_{self.mode}.json"
             )
 
             self.new_data_path = (
-                f"./data/multiwoz_dst/MULTIWOZ2.3/modify_data_reformat_{self.mode}.json"
+                f"{self.new_data_dir}/modify_data_reformat_{self.mode}.json"
             )
             # load data from 2.2
             self._load_data()
@@ -358,16 +363,16 @@ class Modify_Multiwoz(object):
                 "num_idx_with_per"   : num_idx_with_per,
             }
             
-        with open(f"./data/multiwoz_dst/MULTIWOZ2.3/modify_state.json", "w") as tf:
+        with open(f"{self.new_data_dir}/modify_state.json", "w") as tf:
             json.dump(state, tf, indent=2)
 
     def convert_back_multiwoz(self):
-        # modify based on data.json in 2.2, output data.json in 2.3
+        # modify based on data.json in 2.2, output data.json in 2.2+
         data_path = (
-            f"./data/multiwoz_dst/MULTIWOZ2.2/data.json"
+            f"{self.new_data_dir}/data.json"
         )
         new_data_path = (
-            f"./data/multiwoz_dst/MULTIWOZ2.3/data.json"
+            f"{self.new_data_dir}/data.json"
         )
 
         with open(data_path) as df:
@@ -377,7 +382,7 @@ class Modify_Multiwoz(object):
             self.mode = mode
 
             modified_data_path = (
-                f"./data/multiwoz_dst/MULTIWOZ2.3/modify_data_reformat_{self.mode}.json"
+                f"{self.new_data_dir}/modify_data_reformat_{self.mode}.json"
             )
             modified_data = self._load_json(modified_data_path)
             # load modifcation
@@ -407,8 +412,8 @@ class Modify_Multiwoz(object):
 
     def sample_verification_dialog(self):
         self.verify_num = 100
-        self.verify_data_path = f"./data/multiwoz_dst/MULTIWOZ2.3/verification_{self.verify_num}.json"
-        self.verify_data_unc_path = f"./data/multiwoz_dst/MULTIWOZ2.3/verification_{self.verify_num}_unc.json"
+        self.verify_data_path = f"{self.new_data_dir}/verification_{self.verify_num}.json"
+        self.verify_data_unc_path = f"{self.new_data_dir}/verification_{self.verify_num}_unc.json"
         self.total_corrected = []
         self.total_uncorrected = []
         for mode in ["train", "valid"]:
@@ -417,7 +422,7 @@ class Modify_Multiwoz(object):
             modify_dialog_path_list = []
             for domain in DOMAINS:
                 for slot_type in SLOT_TYPES_v22:
-                    modify_dialog_path = f"./data/multiwoz_dst/MULTIWOZ2.2/data_reformat_{self.mode}_{domain}_{slot_type}.json"
+                    modify_dialog_path = f"{self.new_data_dir}/data_reformat_{self.mode}_{domain}_{slot_type}.json"
                     if os.path.exists(modify_dialog_path):
                         modify_dialog_path_list.append(modify_dialog_path)
 
@@ -426,7 +431,7 @@ class Modify_Multiwoz(object):
                 self.total_corrected += list(modify_dialog.values())
             # get uncorrected ones
             self.data_path = (
-                f"./data/multiwoz_dst/MULTIWOZ2.2/data_reformat_{self.mode}.json"
+                f"{self.new_data_dir}/data_reformat_{self.mode}.json"
             )
             self._load_data()
             for idx, turn in tqdm(self.data.items()):
@@ -458,10 +463,10 @@ class Modify_Multiwoz(object):
 
 def main():
     modify = Modify_Multiwoz(mode="test")
-    # modify.modify_multiwoz()
+    modify.modify_multiwoz()
     # modify.compare_before_after_modify()
-    # modify.convert_back_multiwoz()
-    modify.sample_verification_dialog()
+    modify.convert_back_multiwoz()
+    # modify.sample_verification_dialog()
 
 if __name__ == "__main__":
     main()

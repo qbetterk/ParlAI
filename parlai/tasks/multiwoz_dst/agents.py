@@ -116,7 +116,7 @@ class MultiWozDSTTeacher(FixedDialogTeacher):
         data_dir = os.path.join(opt['datapath'], 'multiwoz_dst', 'MULTIWOZ'+self.data_version)
         # data_dir = os.path.join('/checkpoint/kunqian/multiwoz/data/MultiWOZ_2.1/')
         if self.data_version == "2.1":
-            data_path = os.path.join(data_dir, 'data_reformat_trade_turn_sa_ha.json')
+            data_path = os.path.join(data_dir, 'data_reformat.json')
             # data_path = os.path.join(data_dir, 'data_reformat_filtername.json')
         elif self.data_version == "2.2":
             data_path = os.path.join(data_dir, 'data_reformat.json')
@@ -136,12 +136,12 @@ class MultiWozDSTTeacher(FixedDialogTeacher):
 
         # data augmentation
         aug_data_path = data_path.replace(".json", "_train_aug.json")
-        if not os.path.exists(aug_data_path) or self.create_aug_data:
+        if not os.path.exists(aug_data_path) and self.create_aug_data:
             data_aug(data_path, data_dir)
 
         # data augmentation
         scr_data_path = data_path.replace(".json", "_train_scr.json")
-        if (self.data_scr and not os.path.exists(scr_data_path)) or self.create_scr_data:
+        if (self.data_scr and not os.path.exists(scr_data_path)) and self.create_scr_data:
             data_scr(data_path, data_dir)
 
         return data_path, data_dir

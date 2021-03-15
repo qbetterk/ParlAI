@@ -41,9 +41,6 @@ random.seed(0)
 
 class Analyze_Multiwoz(object):
     def __init__(self, data_path=None):
-        # self.data_path = (
-        #     "./data/multiwoz_dst/MULTIWOZ2.1/data_reformat_trade_turn_sa_ha_test.json"
-        # )
         self.data_path = (
             "./data/multiwoz_dst/MULTIWOZ2.2/data_reformat_test.json"
         )
@@ -381,6 +378,7 @@ class Analyze_Multiwoz(object):
                                 self.tmp_log[idx_] = turn.copy()
                                 self.tmp_log[idx_]["slots"] = f"{target_domain} name {target_name}"
                                 del self.tmp_log[idx_]["domains"]
+
 
 
     def Count_Type_Info(self):
@@ -1177,6 +1175,8 @@ class Analyze_Multiwoz(object):
                                 # work for 6
                                 self.update_tmp_log(idx, turn, last_turn, domain, slot_type, label_value)
 
+        self._save_tmp_log()
+
     def Count_Parking_Info(self):
         wi_type_set = {
             "hotel": set(),
@@ -1278,6 +1278,9 @@ class Analyze_Multiwoz(object):
                             else:
                                 pass
                                 self.update_tmp_log(idx, turn, last_turn, domain, slot_type, "yes")
+
+
+        self._save_tmp_log()
 
     def Count_Internet_Info(self):
         wi_type_set = {
@@ -1392,6 +1395,8 @@ class Analyze_Multiwoz(object):
                                     pass
                                     self.update_tmp_log(idx, turn, last_turn, domain, slot_type, "yes")
 
+        self._save_tmp_log()
+
     def Count_Star_Info(self):
         wi_type_set = {
             "hotel": set(),
@@ -1481,6 +1486,8 @@ class Analyze_Multiwoz(object):
                         self.update_tmp_log(idx, turn, last_turn, domain, slot_type, " | ".join(label_value))
                         pass
 
+        self._save_tmp_log()
+
     def Count_Name_Info(self):
         wi_type_set = {
             "attraction": set(),
@@ -1497,10 +1504,10 @@ class Analyze_Multiwoz(object):
             "hotel": set(),
             "restaurant": set(),
         }
-        for domain in ["restaurant"]:#tmp:
+        for domain in ["restaurant", "attraction", "hotel"]:#tmp:
             slot_type = "name"
             self.tmp_log = {}
-            # self.tmp_log_path = ".".join(self.data_path.split(".")[:-1]) + f"_{domain}_{slot_type}.json"
+            self.tmp_log_path = ".".join(self.data_path.split(".")[:-1]) + f"_{domain}_{slot_type}.json"
             self._load_otgy()
             poss_value = self.otgy[f"{domain}--{slot_type}"]
             for idx, turn in self.data.items():
@@ -1562,7 +1569,7 @@ class Analyze_Multiwoz(object):
                                     and "taxi" not in user_utt:
                                     # # work for 18
                                     flag = 1
-                                    # self.update_tmp_log(idx, turn, last_turn, domain, slot_type, label_value)
+                                    self.update_tmp_log(idx, turn, last_turn, domain, slot_type, label_value)
                                     pass
                         if flag == 0:
                             for value in poss_value:
@@ -1572,7 +1579,7 @@ class Analyze_Multiwoz(object):
                                     # used to use weird list ["one", "ali", "bridge", "ask", "indian", "south", "city",  "italian restaurant", "other restaurant"]
                                     if re.search(r"[^a-z]"+value+r"[^a-z]", sys_utt) and value not in user_utt:
                                         # work for 125
-                                        # self.update_tmp_log(idx, turn, last_turn, domain, slot_type, label_value)
+                                        self.update_tmp_log(idx, turn, last_turn, domain, slot_type, label_value)
                                         pass
                                     elif value != "j restaurant" and fuzz.partial_ratio(value, sys_utt) >= 90:
 
@@ -1755,32 +1762,35 @@ class Analyze_Multiwoz(object):
         # count_name_info = self.Count_Name_Info_old()
         # self.update_results(key_="count_name_info", value_=count_name_info)
 
-        # self.Create_OTGY_M22()
+        if not os.path.exists(self.otgy_path):
+            self.Create_OTGY_M22()
 
         # self.Analyze_Bias()
 
         # self.Search_Name_Entity()
 
-        # # save tmp log
+        # save tmp log
         # self._save_tmp_log()
 
-        # self.Count_Type_Info()
 
-        # self.Count_Dest_Depa_Info()
+        self.Count_Type_Info()
 
-        # self.Count_Area_Info()
+        self.Count_Dest_Depa_Info()
 
-        # self.Count_Price_Info()
+        self.Count_Area_Info()
 
-        # self.Count_Food_Info()
+        self.Count_Price_Info()
 
-        # self.Count_Parking_Info()
+        self.Count_Food_Info()
 
-        # self.Count_Internet_Info()
+        self.Count_Parking_Info()
+
+        self.Count_Internet_Info()
         
-        # self.Count_Star_Info()
+        self.Count_Star_Info()
 
         self.Count_Name_Info()
+
 
 
 

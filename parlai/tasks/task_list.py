@@ -1432,7 +1432,6 @@ task_list = [
         ),
     },
     {
-<<<<<<< HEAD
         "id": "GoogleSGDDST",
         "display_name": "GoogleSGDDST",
         "task": "google_sgd_dst",
@@ -1443,7 +1442,7 @@ task_list = [
             "human and a virtual assistant."
         ),
     },
-=======
+    {
         "id": "TaskMaster2",
         "display_name": "TaskMaster2",
         "task": "taskmaster2",
@@ -1473,5 +1472,4 @@ task_list = [
         ),
         "links": {"arXiv": "https://arxiv.org/abs/2005.00614"},
     },
->>>>>>> 40f94b8e95b23b5d0f29d004921d96c286e02358
 ]
