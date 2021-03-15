@@ -87,6 +87,18 @@ Though pip install command is easier, it would not give you access to the ready 
 
 
 ## Examples
+To modify the Multiwoz2.2 and generate the new 2.2+ version:
+```bash
+parlai analyze_multiwoz.py
+```
+and convert the changes back to the original format and generate "data.json":
+```bash
+parlai modify_multiwoz.py
+```
+
+
+
+## Examples
 
 A large set of scripts can be found in [`parlai/scripts`](https://github.com/facebookresearch/ParlAI/tree/master/parlai/scripts). Here are a few of them.
 Note: If any of these examples fail, check the [installation section](#installing-parlai) to see if you have missed something.
