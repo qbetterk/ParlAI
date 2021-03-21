@@ -5,165 +5,531 @@
 """
 BART Module.
 """
+import numpy as np
 import torch
+import torch.cuda
+import torch.nn as nn
 import torch.nn.functional as F
-from typing import Any, Dict, Union, List, Optional
-from parlai.agents.transformer.modules import TransformerGeneratorModel, TransformerEncoderLayer, MultiHeadAttention, TransformerFFN
+from typing import Any, Dict, Union, List, Optional, Tuple
+from parlai.agents.transformer.modules import (TransformerGeneratorModel, 
+                                               TransformerEncoderLayer, 
+                                               MultiHeadAttention, 
+                                               TransformerFFN,)
 from parlai.core.torch_generator_agent import TorchGeneratorModel
+from parlai.utils.torch import neginf, PipelineHelper
+import pdb
+try:
+    from apex.normalization.fused_layer_norm import FusedLayerNorm as LayerNorm
+
+    APEX_LAYER_NORM = True
+except ImportError:
+    from torch.nn import LayerNorm
+
+    APEX_LAYER_NORM = False
+
+LAYER_NORM_EPS = 1e-5  # Epsilon for layer norm.
 
 
+def _normalize(tensor, norm_layer):
+    """
+    Broadcast layer norm.
+    """
+    is_cpu = tensor.device == 'cpu' or tensor.device.type == 'cpu'
+    if APEX_LAYER_NORM and not is_cpu:
+        # fused_layer_norm has a bug around multi-device networks.
+        # https://github.com/NVIDIA/apex/issues/770
+        # https://github.com/NVIDIA/apex/issues/371
+        with torch.cuda.device(tensor.device):
+            return norm_layer(tensor)
+    else:
+        return norm_layer(tensor)
 
+def _create_embeddings(dictionary, embedding_size, padding_idx):
+    """
+    Create and initialize word embeddings.
+    """
+    e = nn.Embedding(len(dictionary), embedding_size, padding_idx)
+    nn.init.normal_(e.weight, mean=0, std=embedding_size ** -0.5)
+    nn.init.constant_(e.weight[padding_idx], 0)
+    return e
 
-class NARModel(TorchGeneratorModel):
+class NarModel(TorchGeneratorModel):
     """
     Non-autoregressive Model.
     """
+    @classmethod
+    def build_encoder(
+        cls,
+        opt,
+        dictionary,
+        embedding=None,
+        padding_idx=None,
+        reduction_type='mean',
+        n_positions=1024,
+        n_segments=0,
+    ):
+        n_layers = (
+            opt['n_encoder_layers']
+            if opt.get('n_encoder_layers', -1) > 0
+            else opt['n_layers']
+        )
+        return TransformerEncoder(
+            n_heads=opt['n_heads'],
+            n_layers=n_layers,
+            embedding_size=opt['embedding_size'],
+            ffn_size=opt['ffn_size'],
+            vocabulary_size=len(dictionary),
+            embedding=embedding,
+            dropout=opt['dropout'],
+            attention_dropout=opt['attention_dropout'],
+            relu_dropout=opt['relu_dropout'],
+            padding_idx=padding_idx,
+            learn_positional_embeddings=opt['learn_positional_embeddings'],
+            embeddings_scale=opt['embeddings_scale'],
+            reduction_type=reduction_type,
+            n_positions=n_positions,
+            n_segments=n_segments,
+            activation=opt['activation'],
+            variant=opt['variant'],
+            output_scaling=opt['output_scaling'],
+        )
 
+    @classmethod
+    def build_decoder(
+        cls,
+        opt,
+        dictionary,
+        embedding=None,
+        padding_idx=None,
+        n_positions=1024,
+        n_segments=0,
+    ):
+        n_layers = (
+            opt['n_decoder_layers']
+            if opt.get('n_decoder_layers', -1) > 0
+            else opt['n_layers']
+        )
+        return TransformerDecoder(
+            n_heads=opt['n_heads'],
+            n_layers=n_layers,
+            embedding_size=opt['embedding_size'],
+            ffn_size=opt['ffn_size'],
+            vocabulary_size=len(dictionary),
+            embedding=embedding,
+            dropout=opt['dropout'],
+            attention_dropout=opt['attention_dropout'],
+            relu_dropout=opt['relu_dropout'],
+            padding_idx=padding_idx,
+            learn_positional_embeddings=opt['learn_positional_embeddings'],
+            embeddings_scale=opt['embeddings_scale'],
+            n_positions=n_positions,
+            activation=opt['activation'],
+            variant=opt['variant'],
+            n_segments=n_segments,
+        )
 
-class SelfTransformerDecoder(FairseqIncrementalDecoder):
-    """
-    Transformer decoder consisting of *args.decoder_layers* layers. Each layer
-    is a :class:`TransformerDecoderLayer`.
-    Args:
-        args (argparse.Namespace): parsed command-line arguments
-        dictionary (~fairseq.data.Dictionary): decoding dictionary
-        embed_tokens (torch.nn.Embedding): output embedding
-        no_encoder_attn (bool, optional): whether to attend to encoder outputs.
-            Default: ``False``
-        left_pad (bool, optional): whether the input is left-padded. Default:
-            ``False``
-    """
+    def __init__(self, opt, dictionary):
+        self.pad_idx = dictionary[dictionary.null_token]
+        self.start_idx = dictionary[dictionary.start_token]
+        self.end_idx = dictionary[dictionary.end_token]
+        super().__init__(self.pad_idx, self.start_idx, self.end_idx)
+        self.embeddings = _create_embeddings(
+            dictionary, opt['embedding_size'], self.pad_idx
+        )
 
-    def __init__(self, args, dictionary, embed_tokens, embed_scale=None, no_encoder_attn=False, left_pad=False,
-                 final_norm=True):
-        super().__init__(dictionary)
-        self.dropout = args.dropout
-        self.share_input_output_embed = args.share_decoder_input_output_embed
-
-        input_embed_dim = embed_tokens.embedding_dim
-        self.embed_dim = args.decoder_embed_dim
-        output_embed_dim = args.decoder_output_dim
-
-        self.padding_idx = embed_tokens.padding_idx
-        self.max_target_positions = args.max_target_positions
-
-        self.embed_tokens = embed_tokens
-        self.embed_scale = math.sqrt(self.embed_dim) if embed_scale is None else embed_scale
-
-        self.project_in_dim = nn.Linear(input_embed_dim, self.embed_dim,
-                                     bias=False) if self.embed_dim != input_embed_dim else None
-
-        self.embed_positions = PositionalEmbedding(
-            args.max_target_positions, self.embed_dim, self.padding_idx,
-            #learned=args.decoder_learned_pos,
-        ) if not args.no_dec_token_positional_embeddings else None
-
-        self.layers = nn.ModuleList([])
-        self.layers.extend([
-            TransformerDecoderLayer(args, no_encoder_attn)
-            for _ in range(args.decoder_layers)
-        ])
-
-        self.adaptive_softmax = None
-
-        self.project_out_dim = nn.Linear(self.embed_dim, output_embed_dim, bias=False) \
-            if self.embed_dim != output_embed_dim and not args.tie_adaptive_weights else None
-
-        self.load_softmax = not getattr(args, 'remove_head', False)
-
-        if self.load_softmax:
-            if args.adaptive_softmax_cutoff is not None:
-                self.adaptive_softmax = AdaptiveSoftmax(
-                    len(dictionary),
-                    output_embed_dim,
-                    options.eval_str_list(args.adaptive_softmax_cutoff, type=int),
-                    dropout=args.adaptive_softmax_dropout,
-                    adaptive_inputs=embed_tokens if args.tie_adaptive_weights else None,
-                    factor=args.adaptive_softmax_factor,
-                    tie_proj=args.tie_adaptive_proj,
-                )
-            elif not self.share_input_output_embed:
-                self.embed_out = nn.Parameter(torch.Tensor(len(dictionary), output_embed_dim))
-                #nn.init.normal_(self.embed_out, mean=0, std=output_embed_dim ** -0.5)
-        self.register_buffer('version', torch.Tensor([2]))
-        self.normalize = args.decoder_normalize_before and final_norm
-        if self.normalize:
-            self.layer_norm = BertLayerNorm(self.embed_dim)
-
-    def forward(self, prev_output_tokens, encoder_out=None, incremental_state=None):
-        """
-        Args:
-            prev_output_tokens (LongTensor): previous decoder outputs of shape
-                `(batch, tgt_len)`, for input feeding/teacher forcing
-            encoder_out (Tensor, optional): output from the encoder, used for
-                encoder-side attention
-            incremental_state (dict): dictionary used for storing state during
-                :ref:`Incremental decoding`
-        Returns:
-            tuple:
-                - the last decoder layer's output of shape `(batch, tgt_len,
-                  vocab)`
-                - the last decoder layer's attention weights of shape `(batch,
-                  tgt_len, src_len)`
-        """
-        incremental_state=None
-        
-        decoder_padding_mask = prev_output_tokens.eq(self.padding_idx)
-
-        # embed positions
-        positions = self.embed_positions(
-            prev_output_tokens,
-        ) if self.embed_positions is not None else None
-
-        # embed tokens and positions
-        x = self.embed_tokens(prev_output_tokens)
-        if self.project_in_dim is not None:
-            x = self.project_in_dim(x)
-
-        if positions is not None:
-            x += positions
-        x = F.dropout(x, p=self.dropout, training=self.training)
-        # B x T x C -> T x B x C
-        x = x.transpose(0, 1)
-        attn = None
-        inner_states = [x]
-
-        # decoder layers
-        for layer in self.layers:
-            x, attn = layer(
-                x,
-                encoder_out['encoder_out'] if encoder_out is not None else None,
-                encoder_out['encoder_padding_mask'] if encoder_out is not None else None,
-                decoder_padding_mask,
+        if opt.get('n_positions'):
+            # if the number of positions is explicitly provided, use that
+            n_positions = opt['n_positions']
+        else:
+            # else, use the worst case from truncate
+            n_positions = max(
+                opt.get('truncate') or 0,
+                opt.get('text_truncate') or 0,
+                opt.get('label_truncate') or 0,
             )
-            inner_states.append(x)
-        if self.normalize:
-            x = self.layer_norm(x)
-        # T x B x C -> B x T x C
-        x = x.transpose(0, 1)
+            if n_positions == 0:
+                # default to 1024
+                n_positions = 1024
+        n_segments = opt.get('n_segments', 0)
 
-        if self.project_out_dim is not None:
-            x = self.project_out_dim(x)
+        if n_positions < 0:
+            raise ValueError('n_positions must be positive')
 
-        if self.adaptive_softmax is None and self.load_softmax:
-            # project back to size of vocabulary
-            if self.share_input_output_embed:
-                x = F.linear(x, self.embed_tokens.weight)
-            else:
-                x = F.linear(x, self.embed_out)
+        self.encoder = self.build_encoder(
+            opt,
+            dictionary,
+            self.embeddings,
+            self.pad_idx,
+            reduction_type=None,
+            n_positions=n_positions,
+            n_segments=n_segments,
+        )
+        self.decoder = self.build_decoder(
+            opt, dictionary, self.embeddings, self.pad_idx, n_positions=n_positions
+        )
 
-        return x, {'attn': attn, 'inner_states': inner_states, 'predicted_lengths': encoder_out['predicted_lengths']}
+    def forward(self, *xs, ys=None, prev_enc=None, maxlen=None, bsz=None):
+        """
+        Get output predictions from the model.
+
+        :param xs:
+            input to the encoder
+        :type xs:
+            LongTensor[bsz, seqlen]
+        :param ys:
+            Expected output from the decoder. Used
+            for teacher forcing to calculate loss.
+        :type ys:
+            LongTensor[bsz, outlen]
+        :param prev_enc:
+            if you know you'll pass in the same xs multiple times, you can pass
+            in the encoder output from the last forward pass to skip
+            recalcuating the same encoder output.
+        :param maxlen:
+            max number of tokens to decode. if not set, will use the length of
+            the longest label this model has seen. ignored when ys is not None.
+        :param bsz:
+            if ys is not provided, then you must specify the bsz for greedy
+            decoding.
+
+        :return:
+            (scores, candidate_scores, encoder_states) tuple
+
+            - scores contains the model's predicted token scores.
+              (FloatTensor[bsz, seqlen, num_features])
+            - candidate_scores are the score the model assigned to each candidate.
+              (FloatTensor[bsz, num_cands])
+            - encoder_states are the output of model.encoder. Model specific types.
+              Feed this back in to skip encoding on the next call.
+        """
+        assert ys is not None, "Greedy decoding in TGModel.forward no longer supported."
+        # TODO: get rid of longest_label
+        # keep track of longest label we've ever seen
+        # we'll never produce longer ones than that during prediction
+        self.longest_label = max(self.longest_label, ys.size(1))
+
+        # use cached encoding if available
+        encoder_states = prev_enc if prev_enc is not None else self.encoder(*xs)
+
+        # use teacher forcing
+        scores, preds = self.decode_forced(encoder_states, ys)
+        return scores, preds, encoder_states
+
+    def reorder_encoder_states(self, encoder_states, indices):
+        """
+        Reorder the encoder states.
+
+        See ``TorchGeneratorModel.reorder_encoder_states`` for a description.
+        """
+        enc, mask = encoder_states
+        if not torch.is_tensor(indices):
+            indices = torch.LongTensor(indices).to(enc.device)
+        enc = torch.index_select(enc, 0, indices)
+        mask = torch.index_select(mask, 0, indices)
+        return enc, mask
+
+    def reorder_decoder_incremental_state(
+        self, incremental_state: Dict[int, dict], inds: torch.Tensor
+    ) -> Dict[int, dict]:
+        """
+        Reorder the decoder incremental state.
+
+        See ``TorchGeneratorModel.reorder_decoder_incremental_state`` for a description.
+
+        Here, incremental_state is a dict whose keys are layer indices and whose values
+        are dicts containing the incremental state for that layer.
+        """
+        return {
+            idx: layer.reorder_incremental_state(incremental_state[idx], inds)
+            for idx, layer in enumerate(self.decoder.layers)
+        }
+
+    def output(self, tensor):
+        """
+        Compute output logits.
+        """
+        # project back to vocabulary
+        output = F.linear(tensor, self.embeddings.weight)
+        # compatibility with fairseq: fairseq sometimes reuses BOS tokens and
+        # we need to force their probability of generation to be 0.
+        output[:, :, self.start_idx] = neginf(output.dtype)
+        return output
+
+
+class TransformerDecoder(nn.Module):
+    """
+    Transformer Decoder layer.
+
+    :param int n_heads: the number of multihead attention heads.
+    :param int n_layers: number of transformer layers.
+    :param int embedding_size: the embedding sizes. Must be a multiple of n_heads.
+    :param int ffn_size: the size of the hidden layer in the FFN
+    :param embedding: an embedding matrix for the bottom layer of the transformer.
+        If none, one is created for this encoder.
+    :param float dropout: Dropout used around embeddings and before layer
+        layer normalizations. This is used in Vaswani 2017 and works well on
+        large datasets.
+    :param float attention_dropout: Dropout performed after the multhead attention
+        softmax. This is not used in Vaswani 2017.
+    :param float relu_attention: Dropout used after the ReLU in the FFN. Not used
+        in Vaswani 2017, but used in Tensor2Tensor.
+    :param int padding_idx: Reserved padding index in the embeddings matrix.
+    :param bool learn_positional_embeddings: If off, sinusoidal embeddings are
+        used. If on, position embeddings are learned from scratch.
+    :param bool embeddings_scale: Scale embeddings relative to their dimensionality.
+        Found useful in fairseq.
+    :param int n_positions: Size of the position embeddings matrix.
+    """
+
+    def __init__(
+        self,
+        n_heads,
+        n_layers,
+        embedding_size,
+        ffn_size,
+        vocabulary_size,
+        embedding=None,
+        dropout=0.0,
+        attention_dropout=0.0,
+        relu_dropout=0.0,
+        embeddings_scale=True,
+        learn_positional_embeddings=False,
+        padding_idx=None,
+        n_positions=1024,
+        n_segments=0,
+        variant='aiayn',
+        activation='relu',
+        out_dim=None,
+    ):
+        super().__init__()
+        self.embedding_size = embedding_size
+        self.ffn_size = ffn_size
+        self.n_layers = n_layers
+        self.n_heads = n_heads
+        self.dim = embedding_size
+        self.activation = activation
+        self.variant = variant
+
+        self.embeddings_scale = embeddings_scale
+        self.dropout = nn.Dropout(p=dropout)  # --dropout
+
+        self.n_positions = n_positions
+        if out_dim is not None:
+            self.out_dim = out_dim
+        else:
+            self.out_dim = embedding_size
+
+        # self.project_out_layer = None
+        # if self.embedding_size != out_dim:
+        #     self.project_out_layer = nn.Linear(self.embedding_size, out_dim, bias=False)
+
+        assert (
+            embedding_size % n_heads == 0
+        ), 'Transformer embedding size must be a multiple of n_heads'
+
+        self.embeddings = embedding
+
+        if (
+            self.variant == 'xlm'
+            or self.variant == 'prelayernorm'
+            or self.variant == 'bart'
+        ):
+            self.norm_embeddings = LayerNorm(self.dim, eps=LAYER_NORM_EPS)
+            if self.variant == 'xlm':
+                warn_once(
+                    'DEPRECATED: XLM should only be used for backwards compatibility, '
+                    'as it involves a less-stable layernorm operation.'
+                )
+        elif self.variant == 'aiayn':
+            pass
+        else:
+            raise ValueError("Can't handle --variant {}".format(self.variant))
+
+        # create the positional embeddings
+        self.position_embeddings = nn.Embedding(n_positions, embedding_size)
+        if not learn_positional_embeddings:
+            create_position_codes(
+                n_positions, embedding_size, out=self.position_embeddings.weight
+            )
+        else:
+            nn.init.normal_(self.position_embeddings.weight, 0, embedding_size ** -0.5)
+
+        # build the model
+        self.layers = nn.ModuleList()
+        for _ in range(self.n_layers):
+            self.layers.append(
+                TransformerDecoderLayer(
+                    n_heads,
+                    embedding_size,
+                    ffn_size,
+                    attention_dropout=attention_dropout,
+                    relu_dropout=relu_dropout,
+                    dropout=dropout,
+                    activation=activation,
+                    variant=variant,
+                )
+            )
+
+    def forward_embedding(
+        self,
+        input: torch.LongTensor,
+        positions: Optional[torch.LongTensor] = None,
+        segments: Optional[torch.LongTensor] = None,
+    ):
+        """
+        Embed tokens prior to feeding into transformer.
+
+        :param LongTensor[batch, seqlen] input:
+            The target input IDs
+        :param LongTensor[batch, seqlen] positions:
+            Positions for input IDs. If None, computes defaults.
+        :param LongTensor[batch, seqlen] segements:
+            Segment IDs for extra embedding features. If None, not used.
+
+        :return (tensor, mask):
+            embeded input and mask
+        """
+        tensor = self.embeddings(input)
+        if self.embeddings_scale:
+            tensor = tensor * np.sqrt(self.dim)
+        if self.variant == 'xlm':
+            tensor = _normalize(tensor, self.norm_embeddings)
+        if positions.max().item() > self.n_positions:
+            warn_once(
+                'You are inputting a sequence of {x} length, but only have '
+                '--n-positions {y}. Set --truncate or increase --n-positions'.format(
+                    x=positions.max().item(), y=self.n_positions
+                )
+            )
+        tensor = tensor + self.position_embeddings(positions).expand_as(tensor)
+        if self.variant == 'bart':
+            tensor = _normalize(tensor, self.norm_embeddings)
+
+        return tensor
+
+    def forward_layers(
+        self,
+        tensor: torch.Tensor,
+        encoder_output: torch.Tensor,
+        encoder_mask: torch.Tensor,
+        incr_state: Dict[int, torch.Tensor],
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        """
+        Forward pass of decoder layers.
+
+        :param tensor:
+            embedded input tensor for the decoder
+        :param enc_out:
+            encoder outputs
+        :param enc_mask:
+            encoder output mask
+        :param incr_state:
+            Dict mapping layer_idx to incremental state
+
+        :return (tensor, new_incr_state):
+            return encoding after applying decoder layers, as well
+            as new incremental decoding state.
+        """
+        new_incr_state = {}
+        if getattr(self.layers, 'is_model_parallel', False):
+            tensor, new_incr_state = self._apply_model_parallel(
+                tensor, encoder_output, encoder_mask, incr_state
+            )
+        else:
+            for idx, layer in enumerate(self.layers):
+                tensor, new_incr_state[idx] = layer(
+                    x=tensor,
+                    encoder_output=encoder_output,
+                    encoder_mask=encoder_mask,
+                    incr_state=incr_state.get(idx),
+                )
+
+        return tensor, new_incr_state
+
+    def forward(self, input, encoder_state, incr_state=None):
+        """
+        Forward pass.
+
+        :param LongTensor[batch,seqlen] input:
+            The decoder inputs (partial or full decoded token IDs).
+        :param encoder_state:
+            Output from the encoder module forward pass.
+        :param incr_state:
+            The incremental state: a dictionary whose keys index the layers and whose
+            values contain the incremental state for each layer.
+        """
+        encoder_output, encoder_mask, pred_len = encoder_state
+
+        seq_len = input.size(1)
+        positions = input.new(seq_len).long()
+        positions = torch.arange(seq_len, out=positions).unsqueeze(0)
+
+        if incr_state is not None:
+            # We're doing incremental decoding, so select only the most recent position
+            input = input[:, -1:]
+            if positions is not None:
+                positions = positions[:, -1:]
+        else:
+            incr_state = {}
+
+        tensor = self.forward_embedding(input, positions)
+
+        tensor = self.dropout(tensor)  # --dropout
+
+        tensor, new_incr_state = self.forward_layers(
+            tensor, encoder_output, encoder_mask, incr_state
+        )
+
+        # if self.project_out_layer is not None:
+        #     tensor = self.project_out_layer(tensor)
+
+        if self.variant == 'prelayernorm':
+            tensor = _normalize(tensor, self.norm_embeddings)
+
+        return tensor, new_incr_state
+
+    def _apply_model_parallel(self, tensor, encoder_output, encoder_mask, incr_state):
+        """
+        Pipeline application of model parallelism.
+        """
+        chunks = PipelineHelper.split(
+            (tensor, encoder_output, encoder_mask, incr_state)
+        )
+        work_items = PipelineHelper.schedule_work_items(self.layers, chunks)
+
+        new_incr_state = {i: [] for i, _ in enumerate(self.layers)}
+
+        for chunk_idx, layer_nos, next_device in work_items:
+            s_tensor, s_enc_out, s_enc_mask, s_incr_state = chunks[chunk_idx]
+            for layer_no in layer_nos:
+                s_tensor, nis = self.layers[layer_no](
+                    x=s_tensor,
+                    encoder_output=s_enc_out,
+                    encoder_mask=s_enc_mask,
+                    incr_state=s_incr_state.get(layer_no),
+                )
+                new_incr_state[layer_no].append(nis)
+            # don't move incr state, it's always on the correct device
+            s_tensor, s_enc_out, s_enc_mask = PipelineHelper.chunk_to(
+                (s_tensor, s_enc_out, s_enc_mask), next_device
+            )
+            chunks[chunk_idx] = (s_tensor, s_enc_out, s_enc_mask, s_incr_state)
+
+        tensor_out = PipelineHelper.join([c[0] for c in chunks])
+        new_incr_state = {
+            layer_no: PipelineHelper.join(pieces)
+            for layer_no, pieces in new_incr_state.items()
+        }
+
+        return tensor_out, new_incr_state
 
     def max_positions(self):
         """Maximum output length supported by the decoder."""
-        if self.embed_positions is None:
-            return self.max_target_positions
-        #return min(self.max_target_positions, self.embed_positions.max_positions())
-        return self.max_target_positions
+        return self.n_positions
+
     def buffered_future_mask(self, tensor):
         dim = tensor.size(0)
-        if not hasattr(self,
-                       '_future_mask') or self._future_mask is None or self._future_mask.device != tensor.device:
+        if not hasattr(self, '_future_mask') or self._future_mask is None or self._future_mask.device != tensor.device:
             self._future_mask = torch.triu(utils.fill_with_neg_inf(tensor.new(dim, dim)), 1)
         if self._future_mask.size(0) < dim:
             self._future_mask = torch.triu(utils.fill_with_neg_inf(self._future_mask.resize_(dim, dim)), 1)
@@ -171,7 +537,6 @@ class SelfTransformerDecoder(FairseqIncrementalDecoder):
 
     def upgrade_state_dict_named(self, state_dict, name):
         pass
-
 
 class TransformerDecoderLayer(nn.Module):
     """
@@ -249,6 +614,7 @@ class TransformerDecoderLayer(nn.Module):
         # encoder_attn_layer_norm norm 2
         if self.variant == 'prelayernorm':
             x = _normalize(x, self.norm2)
+
         x, final_encoder_attn_incr_state = self.encoder_attention(
             query=x,
             key=encoder_output,
@@ -429,7 +795,7 @@ class TransformerEncoder(nn.Module):
             self.segment_embeddings = nn.Embedding(self.n_segments, self.dim)
 
         # embed for sequence length
-        self.len_embeddings = nn.Embedding(max_target_positions, embedding_size)
+        self.len_embeddings = nn.Embedding(n_positions, embedding_size)
         nn.init.normal_(self.len_embeddings.weight, mean=0, std=0.02)
 
         # build the model
@@ -577,6 +943,7 @@ class TransformerEncoder(nn.Module):
         if not mask.any():
             mask = None
 
+        # pdb.set_trace()
         # --dropout on the embeddings
         tensor = self.dropout(tensor)
 
@@ -588,13 +955,15 @@ class TransformerEncoder(nn.Module):
         if self.variant == 'prelayernorm':
             tensor = _normalize(tensor, self.norm_embeddings)
 
-        # predict length of decoding sequence        
-        pred_len_logits = torch.matmul(tensor[0, :, :], self.len_embeddings.weight.transpose(0, 1)).float()
-        pred_len_logits[:, 0] += float('-inf')   # Cannot predict the len_token
+        # predict length of decoding sequence    
+        # pdb.set_trace()    
+        pred_len_logits = torch.matmul(tensor.clone()[:, 0, :], self.len_embeddings.weight).float()
+        # pred_len_logits[:, 0] += float('-inf')   # Cannot predict the len_token
         pred_len = F.log_softmax(pred_len_logits, dim=-1)
 
+        # pdb.set_trace()
         # restore logits and mask
-        tensor = tensor[1:, :, :]
+        tensor = tensor[:, 1:, :]
         if mask is not None:
             mask = mask[:, 1:]
 
@@ -621,6 +990,11 @@ class TransformerEncoder(nn.Module):
 
         tensor_out, mask_out = PipelineHelper.join(chunks)
         return tensor_out
+
+
+    def max_positions(self):
+        """Maximum input length supported by the encoder."""
+        return self.n_positions
 
 class TransformerEncoderLayer(nn.Module):
     """
