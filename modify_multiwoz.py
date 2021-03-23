@@ -66,7 +66,7 @@ class Modify_Multiwoz(object):
         self.mode = mode
         self.old_data_dir = "./data/multiwoz_dst/MULTIWOZ2.2"
         self.data_path = (
-            f"{self.new_data_dir}/data_reformat_{self.mode}.json"
+            f"{self.old_data_dir}/data_reformat_{self.mode}.json"
         )
         # accumulated slots and dialog history
         self.new_data_dir = "./data/multiwoz_dst/MULTIWOZ2.2+"
@@ -82,7 +82,7 @@ class Modify_Multiwoz(object):
             f"{self.new_data_dir}/modify_sig_data_reformat_{self.mode}.json"
         )
 
-        self.otgy_path = f"{self.new_data_dir}/otgy.json"
+        self.otgy_path = f"{self.old_data_dir}/otgy.json"
 
 
 
@@ -137,10 +137,10 @@ class Modify_Multiwoz(object):
         for mode in ["train", "valid", "test"]:
             self.mode = mode
             self.data_path = (
-                f"{self.new_data_dir}/data_reformat_{self.mode}.json"
+                f"{self.old_data_dir}/data_reformat_{self.mode}.json"
             )
             self.new_data_path = (
-                f"{self.new_data_dir}/modify_data_reformat_{self.mode}.json"
+                f"{self.old_data_dir}/modify_data_reformat_{self.mode}.json"
             )
             # load data from 2.2
             self._load_data()
@@ -149,7 +149,7 @@ class Modify_Multiwoz(object):
             modify_dialog_path_list = []
             for domain in DOMAINS:
                 for slot_type in SLOT_TYPES_v22:
-                    modify_dialog_path = f"{self.new_data_dir}/data_reformat_{self.mode}_{domain}_{slot_type}.json"
+                    modify_dialog_path = f"{self.old_data_dir}/data_reformat_{self.mode}_{domain}_{slot_type}.json"
                     if os.path.exists(modify_dialog_path):
                         modify_dialog_path_list.append(modify_dialog_path)
 
@@ -164,6 +164,7 @@ class Modify_Multiwoz(object):
                             pdb.set_trace()
                         if slot_val:
                             self.data[idx]["slots_inf"] = self.data[idx]["slots_inf"] + f" {new_slot},"
+                            self.data[idx]["slots_err"] = self.data[idx]["slots_err"] + f" {new_slot},"
 
             # # # count maximum turn number for each dialog
             dial_max_turn_dict = {}
@@ -208,6 +209,40 @@ class Modify_Multiwoz(object):
                         new_slot_list.append(f"{domain} {slot_type} {slot_val}")
                     self.data[idx]["slots_inf"] = ", ".join(new_slot_list)
 
+            # # # copy added slots to the future turns
+            for dial_id, max_turn_num in dial_max_turn_dict.items():
+                bspan = {}
+                for turn_num in range(max_turn_num+1):
+                    idx = f"{dial_id}-{turn_num}"
+                    # if idx == "mul0237.json-4":
+                    #     pdb.set_trace()
+                    if idx not in self.data:
+                        continue
+                    # slot_list = [slot.strip() for slot in self.data[idx]["slots_inf"].split(", ") if len(slot.split()) > 2]
+                    for slot in self.data[idx]["slots_err"].split(","):
+                        slot = slot.strip()
+                        if len(slot.split()) < 3:
+                            continue
+                        domain, slot_type, slot_val = slot.split()[0], slot.split()[1], " ".join(slot.split()[2:])
+                        if domain not in DOMAINS or slot_type not in SLOT_TYPES_v22:
+                            pdb.set_trace()
+                            continue
+                        dom_type = f"{domain}_{slot_type}"
+                        # update slot value
+                        if dom_type not in bspan:
+                            bspan[dom_type] = slot_val
+                        if bspan[dom_type] != slot_val and slot_val != "dontcare":
+                            del bspan[dom_type]
+                            bspan[dom_type] = slot_val
+                    # if idx == "mul0237.json-4":
+                    #     pdb.set_trace()
+                    #     continue
+                    # generate slots
+                    new_slot_list = []
+                    for dom_type, slot_val in bspan.items():
+                        domain, slot_type = dom_type.split("_")
+                        new_slot_list.append(f"{domain} {slot_type} {slot_val}")
+                    self.data[idx]["slots_addup"] = ", ".join(new_slot_list)
             # # # revert it back to the non-accumulated version
             # # # revert it back to multiwoz version, like data.json
 
@@ -219,7 +254,7 @@ class Modify_Multiwoz(object):
         for mode in ["train", "valid", "test"]:
             self.mode = mode
             self.data_path = (
-                f"{self.new_data_dir}/data_reformat_{self.mode}.json"
+                f"{self.old_data_dir}/data_reformat_{self.mode}.json"
             )
 
             self.new_data_path = (
@@ -369,7 +404,7 @@ class Modify_Multiwoz(object):
     def convert_back_multiwoz(self):
         # modify based on data.json in 2.2, output data.json in 2.2+
         data_path = (
-            f"{self.new_data_dir}/data.json"
+            f"{self.old_data_dir}/data.json"
         )
         new_data_path = (
             f"{self.new_data_dir}/data.json"
@@ -382,7 +417,7 @@ class Modify_Multiwoz(object):
             self.mode = mode
 
             modified_data_path = (
-                f"{self.new_data_dir}/modify_data_reformat_{self.mode}.json"
+                f"{self.old_data_dir}/modify_data_reformat_{self.mode}.json"
             )
             modified_data = self._load_json(modified_data_path)
             # load modifcation
@@ -409,6 +444,86 @@ class Modify_Multiwoz(object):
 
         with open(new_data_path, "w") as tf:
             json.dump(self.new_data, tf, indent=2)
+
+    def convert_back_sgd(self):
+        # convert modified result back to sgd format, still 2.2 version
+
+        for mode in ["train", "dev", "test"]:
+            self.mode = mode
+            old_sub_dir = f"{self.old_data_dir}/{self.mode}"
+            new_sub_dir = f"{self.new_data_dir}/{self.mode}"
+            if not os.path.exists(new_sub_dir):
+                os.makedirs(new_sub_dir)
+
+            modified_data_path = (
+                f"{self.old_data_dir}/modify_data_reformat_{self.mode}.json"
+            )
+            # valid subdir is named of "dev"
+            if self.mode == "dev":
+                modified_data_path = (
+                    f"{self.old_data_dir}/modify_data_reformat_valid.json"
+                )
+            # load modified dialog
+            modified_data = self._load_json(modified_data_path)
+
+            # open each file
+            for file_name in tqdm(os.listdir(old_sub_dir)):
+                old_file_path = os.path.join(old_sub_dir, file_name)
+                new_file_path = os.path.join(new_sub_dir, file_name)
+
+                self.data = self._load_json(old_file_path)
+                self.data_dict = {dial["dialogue_id"]: dial for dial in self.data}
+
+                # load modifcation
+                for idx, turn in modified_data.items():
+                    # nothing to modify
+                    if turn["slots_addup"] == "":
+                        continue
+
+                    turn_num = turn["turn_num"]
+                    dial_id = turn["dial_id"]
+
+                    if dial_id in self.data_dict:
+                        old_turn = self.data_dict[dial_id]["turns"][2 * turn_num]
+                        # newly added slot in this turn
+                        for slot in turn["slots_err"].split(","):
+                            if not slot:
+                                continue
+                            new_slot_list = slot.strip().split()
+                            domain, slot_type, slot_val = new_slot_list[0], new_slot_list[1], " ".join(new_slot_list[2:])
+                    
+                            for frame in old_turn["frames"]:
+                                if domain == frame["service"] and slot_val in old_turn["utterance"]:
+                                    start = old_turn["utterance"].find(slot_val)
+                                    end   = start + len(slot_val)
+                                    dom_type = f"{domain}-{slot_type}"
+
+                                    frame["slots"].append({
+                                        "exclusive_end": end,
+                                        "slot": dom_type,
+                                        "start" : start,
+                                        "value" : slot_val
+                                        })
+
+                        # accumulatively added slots
+                        for slot in turn["slots_addup"].split(","):
+                            if not slot:
+                                continue
+                            new_slot_list = slot.strip().split()
+                            domain, slot_type, slot_val = new_slot_list[0], new_slot_list[1], " ".join(new_slot_list[2:])
+                            
+                            for frame in old_turn["frames"]:
+                                if domain == frame["service"]:
+                                    frame["state"]["slot_values"][f"{domain}-{slot_type}"] = slot_val.split("|")
+
+                with open(new_file_path, "w") as tf:
+                    json.dump(list(self.data_dict.values()), tf, indent=2)
+
+
+
+
+
+
 
     def sample_verification_dialog(self):
         self.verify_num = 100
@@ -465,7 +580,8 @@ def main():
     modify = Modify_Multiwoz(mode="test")
     modify.modify_multiwoz()
     # modify.compare_before_after_modify()
-    modify.convert_back_multiwoz()
+    # modify.convert_back_multiwoz()
+    modify.convert_back_sgd()
     # modify.sample_verification_dialog()
 
 if __name__ == "__main__":
