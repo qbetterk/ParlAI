@@ -6,6 +6,7 @@ import pdb
 from tqdm import tqdm
 from collections import defaultdict, OrderedDict
 
+from fuzzywuzzy import fuzz
 DOMAINS = ["attraction", "hotel", "hospital", "restaurant", "police", "taxi", "train", "bus"]
 
 #  # # # for trade data
@@ -160,8 +161,7 @@ class Modify_Multiwoz(object):
                     if len(new_slot.split()) >= 3:
                         new_slot_list = new_slot.split()
                         domain, slot_type, slot_val = new_slot_list[0], new_slot_list[1], " ".join(new_slot_list[2:])
-                        if f"{domain}_{slot_type}" in self.data[idx]["slots_inf"]:
-                            pdb.set_trace()
+
                         if slot_val:
                             self.data[idx]["slots_inf"] = self.data[idx]["slots_inf"] + f" {new_slot},"
                             self.data[idx]["slots_err"] = self.data[idx]["slots_err"] + f" {new_slot},"
@@ -183,7 +183,6 @@ class Modify_Multiwoz(object):
                     #     pdb.set_trace()
                     if idx not in self.data:
                         continue
-                    # slot_list = [slot.strip() for slot in self.data[idx]["slots_inf"].split(", ") if len(slot.split()) > 2]
                     for slot in self.data[idx]["slots_inf"].split(","):
                         slot = slot.strip()
                         if len(slot.split()) < 3:
@@ -199,9 +198,7 @@ class Modify_Multiwoz(object):
                         if bspan[dom_type] != slot_val and slot_val != "dontcare":
                             del bspan[dom_type]
                             bspan[dom_type] = slot_val
-                    # if idx == "mul0237.json-4":
-                    #     pdb.set_trace()
-                    #     continue
+
                     # generate slots
                     new_slot_list = []
                     for dom_type, slot_val in bspan.items():
@@ -234,13 +231,14 @@ class Modify_Multiwoz(object):
                         if bspan[dom_type] != slot_val and slot_val != "dontcare":
                             del bspan[dom_type]
                             bspan[dom_type] = slot_val
-                    # if idx == "mul0237.json-4":
-                    #     pdb.set_trace()
-                    #     continue
+
                     # generate slots
                     new_slot_list = []
                     for dom_type, slot_val in bspan.items():
                         domain, slot_type = dom_type.split("_")
+                        # ignore added slots when original annotation update slots in future turns e.g. pmul0117-3, mul0011-10
+                        if f"{domain} {slot_type}" in self.data[idx]["slots_inf"] and f"{domain} {slot_type} {slot_val}" not in self.data[idx]["slots_inf"]:
+                            continue
                         new_slot_list.append(f"{domain} {slot_type} {slot_val}")
                     self.data[idx]["slots_addup"] = ", ".join(new_slot_list)
             # # # revert it back to the non-accumulated version
@@ -465,7 +463,6 @@ class Modify_Multiwoz(object):
                 )
             # load modified dialog
             modified_data = self._load_json(modified_data_path)
-
             # open each file
             for file_name in tqdm(os.listdir(old_sub_dir)):
                 old_file_path = os.path.join(old_sub_dir, file_name)
@@ -511,17 +508,26 @@ class Modify_Multiwoz(object):
                                 continue
                             new_slot_list = slot.strip().split()
                             domain, slot_type, slot_val = new_slot_list[0], new_slot_list[1], " ".join(new_slot_list[2:])
-                            
+
                             for frame in old_turn["frames"]:
                                 if domain == frame["service"]:
-                                    frame["state"]["slot_values"][f"{domain}-{slot_type}"] = slot_val.split("|")
+                                    if f"{domain}-{slot_type}" in frame["state"]["slot_values"]:
+                                        # no equal case
+                                        if slot_val == frame["state"]["slot_values"][f"{domain}-{slot_type}"]:
+                                            continue
+                                        # original annotation has multiple values
+                                        if len(frame["state"]["slot_values"][f"{domain}-{slot_type}"]) > 1:
+                                            count[0] += 1
+                                            if slot_val in frame["state"]["slot_values"][f"{domain}-{slot_type}"]:
+                                                count[1] += 1
+                                                continue
+                                            else:
+                                                pdb.set_trace()
+                                    frame["state"]["slot_values"][f"{domain}-{slot_type}"] = [slot_val]
+                
 
                 with open(new_file_path, "w") as tf:
                     json.dump(list(self.data_dict.values()), tf, indent=2)
-
-
-
-
 
 
 
