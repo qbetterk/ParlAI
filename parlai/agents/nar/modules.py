@@ -15,6 +15,7 @@ from parlai.agents.transformer.modules import (TransformerGeneratorModel,
                                                TransformerEncoderLayer, 
                                                MultiHeadAttention, 
                                                TransformerFFN,)
+from parlai.agents.bart.modules import BartModel
 from parlai.core.torch_generator_agent import TorchGeneratorModel
 from parlai.utils.torch import neginf, PipelineHelper
 import pdb
@@ -53,7 +54,7 @@ def _create_embeddings(dictionary, embedding_size, padding_idx):
     nn.init.constant_(e.weight[padding_idx], 0)
     return e
 
-class NarModel(TorchGeneratorModel):
+class NarModel(BartModel):
     """
     Non-autoregressive Model.
     """
@@ -132,7 +133,7 @@ class NarModel(TorchGeneratorModel):
         self.pad_idx = dictionary[dictionary.null_token]
         self.start_idx = dictionary[dictionary.start_token]
         self.end_idx = dictionary[dictionary.end_token]
-        super().__init__(self.pad_idx, self.start_idx, self.end_idx)
+        super().__init__(opt, dictionary)
         self.embeddings = _create_embeddings(
             dictionary, opt['embedding_size'], self.pad_idx
         )
@@ -168,52 +169,7 @@ class NarModel(TorchGeneratorModel):
             opt, dictionary, self.embeddings, self.pad_idx, n_positions=n_positions
         )
 
-    def forward(self, *xs, ys=None, prev_enc=None, maxlen=None, bsz=None):
-        """
-        Get output predictions from the model.
 
-        :param xs:
-            input to the encoder
-        :type xs:
-            LongTensor[bsz, seqlen]
-        :param ys:
-            Expected output from the decoder. Used
-            for teacher forcing to calculate loss.
-        :type ys:
-            LongTensor[bsz, outlen]
-        :param prev_enc:
-            if you know you'll pass in the same xs multiple times, you can pass
-            in the encoder output from the last forward pass to skip
-            recalcuating the same encoder output.
-        :param maxlen:
-            max number of tokens to decode. if not set, will use the length of
-            the longest label this model has seen. ignored when ys is not None.
-        :param bsz:
-            if ys is not provided, then you must specify the bsz for greedy
-            decoding.
-
-        :return:
-            (scores, candidate_scores, encoder_states) tuple
-
-            - scores contains the model's predicted token scores.
-              (FloatTensor[bsz, seqlen, num_features])
-            - candidate_scores are the score the model assigned to each candidate.
-              (FloatTensor[bsz, num_cands])
-            - encoder_states are the output of model.encoder. Model specific types.
-              Feed this back in to skip encoding on the next call.
-        """
-        assert ys is not None, "Greedy decoding in TGModel.forward no longer supported."
-        # TODO: get rid of longest_label
-        # keep track of longest label we've ever seen
-        # we'll never produce longer ones than that during prediction
-        self.longest_label = max(self.longest_label, ys.size(1))
-
-        # use cached encoding if available
-        encoder_states = prev_enc if prev_enc is not None else self.encoder(*xs)
-
-        # use teacher forcing
-        scores, preds = self.decode_forced(encoder_states, ys)
-        return scores, preds, encoder_states
 
     def reorder_encoder_states(self, encoder_states, indices):
         """
@@ -221,39 +177,17 @@ class NarModel(TorchGeneratorModel):
 
         See ``TorchGeneratorModel.reorder_encoder_states`` for a description.
         """
-        enc, mask = encoder_states
+        enc, mask, length = encoder_states
+        # import pdb
+        # pdb.set_trace()
         if not torch.is_tensor(indices):
             indices = torch.LongTensor(indices).to(enc.device)
         enc = torch.index_select(enc, 0, indices)
         mask = torch.index_select(mask, 0, indices)
-        return enc, mask
+        length = torch.index_select(mask, 0, indices)
+        return enc, mask, length
 
-    def reorder_decoder_incremental_state(
-        self, incremental_state: Dict[int, dict], inds: torch.Tensor
-    ) -> Dict[int, dict]:
-        """
-        Reorder the decoder incremental state.
 
-        See ``TorchGeneratorModel.reorder_decoder_incremental_state`` for a description.
-
-        Here, incremental_state is a dict whose keys are layer indices and whose values
-        are dicts containing the incremental state for that layer.
-        """
-        return {
-            idx: layer.reorder_incremental_state(incremental_state[idx], inds)
-            for idx, layer in enumerate(self.decoder.layers)
-        }
-
-    def output(self, tensor):
-        """
-        Compute output logits.
-        """
-        # project back to vocabulary
-        output = F.linear(tensor, self.embeddings.weight)
-        # compatibility with fairseq: fairseq sometimes reuses BOS tokens and
-        # we need to force their probability of generation to be 0.
-        output[:, :, self.start_idx] = neginf(output.dtype)
-        return output
 
 
 class TransformerDecoder(nn.Module):
@@ -475,6 +409,8 @@ class TransformerDecoder(nn.Module):
         tensor = self.forward_embedding(input, positions)
 
         tensor = self.dropout(tensor)  # --dropout
+        # import pdb
+        # pdb.set_trace()
 
         tensor, new_incr_state = self.forward_layers(
             tensor, encoder_output, encoder_mask, incr_state
@@ -598,6 +534,9 @@ class TransformerDecoderLayer(nn.Module):
         if self.variant == 'prelayernorm':
             x = _normalize(x, self.norm1)
 
+        # if incr_state.get('self_attn') is not None and 'prev_mask' in incr_state.get('self_attn'):
+        #     import pdb
+        #     pdb.set_trace()
         # don't peak into the future!
         x, final_self_attn_incr_state = self.self_attention(
             query=x,
@@ -937,6 +876,8 @@ class TransformerEncoder(nn.Module):
         # add param for predicting target length
         len_tokens = self.len_embeddings(input.new(input.size(0), 1).fill_(0))
         tensor = torch.cat([len_tokens, tensor], dim=1)
+        # import pdb
+        # pdb.set_trace()
 
         # add mask for predicting target length
         mask = torch.cat([mask.new(input.size(0), 1).fill_(0), mask], dim=1)
@@ -960,6 +901,8 @@ class TransformerEncoder(nn.Module):
         pred_len_logits = torch.matmul(tensor.clone()[:, 0, :], self.len_embeddings.weight).float()
         # pred_len_logits[:, 0] += float('-inf')   # Cannot predict the len_token
         pred_len = F.log_softmax(pred_len_logits, dim=-1)
+        # import pdb
+        # pdb.set_trace()
 
         # pdb.set_trace()
         # restore logits and mask

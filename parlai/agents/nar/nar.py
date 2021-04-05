@@ -55,8 +55,6 @@ class NarAgent(BartAgent):
         return model
 
 
-
-
     def compute_loss(self, batch, return_output=False):
         """
         Override TGA.compute_loss to ignore start token.
@@ -76,14 +74,15 @@ class NarAgent(BartAgent):
         nll_loss = self.criterion(score_view, batch.label_vec.view(-1))
         nll_loss = nll_loss.view(scores.shape[:-1]).sum(dim=1)
 
-        # pdb.set_trace()
+
         # length loss
         length_lprobs = encoder_states[-1]
         length_target = batch['text_vec'].ne(self.model.encoder.padding_idx).sum(-1).unsqueeze(-1) #TODO doesn't work for dynamic length. change to eos-based method.
         len_loss = -length_lprobs.gather(dim=-1, index=length_target)
-
+        import pdb
+        pdb.set_trace()
         # total loss by summing up
-        loss = nll_loss + len_loss
+        loss = nll_loss + torch.squeeze(len_loss)
 
 
         # save loss to metrics
@@ -92,6 +91,7 @@ class NarAgent(BartAgent):
         correct = ((batch.label_vec == preds) * notnull).sum(dim=-1)
 
         self.record_local_metric('loss', AverageMetric.many(loss, target_tokens))
+        self.record_local_metric('len_loss', AverageMetric.many(len_loss, target_tokens.new_ones(target_tokens.shape)))
         self.record_local_metric('ppl', PPLMetric.many(loss, target_tokens))
         self.record_local_metric(
             'token_acc', AverageMetric.many(correct, target_tokens)

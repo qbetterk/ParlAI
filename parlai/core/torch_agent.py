@@ -1854,7 +1854,7 @@ class TorchAgent(ABC, Agent):
         This is easily overridable to facilitate transfer of state dicts.
         """
         try:
-            self.model.load_state_dict(state_dict)
+            self.model.load_state_dict(state_dict, strict=False)
         except RuntimeError as msg:
             msg_ = str(msg)
             if 'size mismatch' in msg_ and 'embedding' in msg_:

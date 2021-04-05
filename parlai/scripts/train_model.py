@@ -444,6 +444,8 @@ class TrainLoop:
             logging.info(f"saving model checkpoint: {opt['model_file']}.checkpoint")
             self.save_model('.checkpoint')
 
+        logging.info(f"saving model checkpoint: {opt['model_file']}.checkpoint")
+        self.save_model(f'.checkpoint_{self._total_epochs}')
         # send valid metrics to agent if the agent wants them
         if hasattr(self.agent, 'receive_metrics'):
             self.agent.receive_metrics(valid_report)
