@@ -86,6 +86,9 @@ class BartAgent(TransformerGeneratorAgent):
             return opt with BART-specific args.
         """
         init_model, _ = self._get_init_model(opt, None)
+        
+        # import pdb
+        # pdb.set_trace()
         if not opt.get('converting') and (
             init_model is None or not PathManager.exists(init_model)
         ):

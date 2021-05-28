@@ -184,7 +184,7 @@ class NarModel(BartModel):
             indices = torch.LongTensor(indices).to(enc.device)
         enc = torch.index_select(enc, 0, indices)
         mask = torch.index_select(mask, 0, indices)
-        length = torch.index_select(mask, 0, indices)
+        length = torch.index_select(length, 0, indices)
         return enc, mask, length
 
 
@@ -876,13 +876,9 @@ class TransformerEncoder(nn.Module):
         # add param for predicting target length
         len_tokens = self.len_embeddings(input.new(input.size(0), 1).fill_(0))
         tensor = torch.cat([len_tokens, tensor], dim=1)
-        # import pdb
-        # pdb.set_trace()
 
         # add mask for predicting target length
-        mask = torch.cat([mask.new(input.size(0), 1).fill_(0), mask], dim=1)
-        if not mask.any():
-            mask = None
+        mask = torch.cat([mask.new(input.size(0), 1).fill_(1), mask], dim=1)
 
         # pdb.set_trace()
         # --dropout on the embeddings
@@ -901,8 +897,6 @@ class TransformerEncoder(nn.Module):
         pred_len_logits = torch.matmul(tensor.clone()[:, 0, :], self.len_embeddings.weight).float()
         # pred_len_logits[:, 0] += float('-inf')   # Cannot predict the len_token
         pred_len = F.log_softmax(pred_len_logits, dim=-1)
-        # import pdb
-        # pdb.set_trace()
 
         # pdb.set_trace()
         # restore logits and mask
@@ -982,6 +976,7 @@ class TransformerEncoderLayer(nn.Module):
             tensor = _normalize(tensor, self.norm1)
 
         attended_tensor = self.attention(tensor, mask=mask)[0]
+
         tensor = residual + self.dropout(attended_tensor)
 
         if self.variant == 'aiayn' or self.variant == 'xlm' or self.variant == 'bart':

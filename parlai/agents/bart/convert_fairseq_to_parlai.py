@@ -133,6 +133,8 @@ class ConversionScript(ParlaiScript):
         self.agent.model.load_state_dict(converted, True)
         self.agent.opt.pop('converting', None)
         self.agent.save(self.opt['output'])
+        # import pdb
+        # pdb.set_trace()
         # 4. enjoy!
         self.print_agent_act()
 
@@ -402,10 +404,13 @@ class ConversionScript(ParlaiScript):
         with PathManager.open(bart_dict) as f:
             offset_dict = {i: l.split()[0] for i, l in enumerate(f.readlines())}
         new_embs = return_dict[enc_emb_key].clone()
+
         for idx, new_idx in offset_dict.items():
             try:
                 new_embs[int(new_idx) + 4] = return_dict[enc_emb_key][idx + 4]
             except ValueError:
+                # import pdb
+                # pdb.set_trace()
                 # if idx is not an int
                 if 'madeupword' in new_idx:
                     pad_idx = int(new_idx.split('madeupword')[1])

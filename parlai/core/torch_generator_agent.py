@@ -747,6 +747,7 @@ class TorchGeneratorAgent(TorchAgent, ABC):
         try:
             loss = self.compute_loss(batch)
             self.backward(loss)
+            # print("backward")
             self.update_params()
             oom_sync = False
         except RuntimeError as e:
@@ -892,6 +893,9 @@ class TorchGeneratorAgent(TorchAgent, ABC):
         else:
             maxlen = self.label_truncate or 256
             beam_preds_scores, beams = self._generate(batch, self.beam_size, maxlen)
+            # beam_preds_scores, beams = self._nar_generate(batch, self.beam_size, maxlen)
+            # import pdb
+            # pdb.set_trace()
             preds, scores = zip(*beam_preds_scores)
             self._add_generation_metrics(batch, preds)
 
@@ -905,7 +909,8 @@ class TorchGeneratorAgent(TorchAgent, ABC):
                     except KeyError:
                         logging.error("Decoding error: %s", tokens)
                         continue
-
+        # import pdb
+        # pdb.set_trace()
         cand_choices = None
         # TODO: abstract out the scoring here
         if self.rank_candidates:
@@ -938,6 +943,164 @@ class TorchGeneratorAgent(TorchAgent, ABC):
         if not self.skip_generation:
             retval.beam_texts = beam_texts
         return retval
+
+    def _nar_generate(self, batch: Batch, beam_size: int, max_ts: int, prefix_tokens: Optional[torch.LongTensor] = None,):
+        """Generate an output with nonautoregressive method"""
+        model = self.model
+        if isinstance(model, torch.nn.parallel.DistributedDataParallel):
+            model = self.model.module
+        encoder_states = model.encoder(*self._encoder_input(batch))
+        if batch.text_vec is not None:
+            dev = batch.text_vec.device
+        else:
+            assert batch.label_vec is not None, "need label_vec for _generate"
+            dev = batch.label_vec.device
+
+        bsz = (
+            len(batch.text_lengths)
+            if batch.text_lengths is not None
+            else len(batch.image)  # type: ignore
+        )
+        if batch.text_vec is not None:
+            batchsize = batch.text_vec.size(0)
+            beams = [
+                self._treesearch_factory(dev)
+                .set_context(self._get_context(batch, batch_idx))
+                .set_block_list(self.beam_block_list)
+                for batch_idx in range(batchsize)
+            ]
+        else:
+            beams = [self._treesearch_factory(dev) for _ in range(bsz)]
+
+        # repeat encoder outputs and decoder inputs
+        decoder_input = self._get_initial_decoder_input(bsz, beam_size, dev)
+
+        # import pdb
+        # pdb.set_trace()
+        inds = torch.arange(bsz).to(dev).unsqueeze(1).repeat(1, beam_size).view(-1)
+        encoder_states = model.reorder_encoder_states(encoder_states, inds)
+        incr_state = None
+
+        ######################################################
+        length_beam_size = 3
+
+        src_tokens = batch['text_vec']
+        # src_tokens == src_tokens.new(src_tokens.tolist())
+        bsz = src_tokens.size(0)
+        
+        # pdb.set_trace()
+        predicted_lengths = encoder_states[-1]
+        beam = predicted_lengths.topk(length_beam_size, dim=1)[1]
+        beam[beam < 2] = 2
+
+        max_len = beam.max().item()
+        length_mask = torch.triu(src_tokens.new(max_len, max_len).fill_(1).long(), 1)
+        length_mask = torch.stack([length_mask[beam[batch] - 1] for batch in range(bsz)], dim=0)
+        tgt_tokens = src_tokens.new(bsz, length_beam_size, max_len).fill_(self.START_IDX)
+        tgt_tokens = (1 - length_mask) * tgt_tokens + length_mask * self.NULL_IDX
+        tgt_tokens = tgt_tokens.view(bsz * length_beam_size, max_len)
+
+        encoder_states = list(encoder_states)
+        # duplicate encoder output (B, T, H) --> (B x lb, T, H)
+        encoder_states[0] = encoder_states[0].unsqueeze(2).repeat(1,1,length_beam_size,1).view(bsz * length_beam_size, -1, encoder_states[0].size(-1))
+        if encoder_states[-1] is not None:
+            # (B, T) -- > (B x lb, T)
+            encoder_states[1] = encoder_states[1].unsqueeze(1).repeat(1,length_beam_size,1).view(bsz * length_beam_size, -1)
+        encoder_states = tuple(encoder_states)
+        # import pdb
+        # pdb.set_trace()
+        hypotheses, lprobs = self.mask_predict(model, encoder_states, tgt_tokens)
+        import pdb
+        pdb.set_trace()
+
+        hypotheses = hypotheses.view(bsz, length_beam_size, max_len)
+        lprobs = lprobs.view(bsz, length_beam_size)
+        tgt_lengths = (1 - length_mask).sum(-1)
+        avg_log_prob = lprobs / tgt_lengths.float()
+        best_lengths = avg_log_prob.max(-1)[1]
+        hypotheses = torch.stack([hypotheses[b, l, :] for b, l in enumerate(best_lengths)], dim=0)
+
+        return lprobs, hypotheses
+
+    def mask_predict(self, model, encoder_states, tgt_tokens):
+
+        def generate_step_with_prob(out):
+            probs = F.softmax(out[0], dim=-1)
+            max_probs, idx = probs.max(dim=-1)
+            return idx, max_probs, probs
+
+        def assign_single_value_byte(x, i, y):
+            x.view(-1)[i.view(-1).nonzero(as_tuple=False)] = y
+
+        def assign_multi_value_byte(x, i, y):
+            x.view(-1)[i.view(-1).nonzero(as_tuple=False)] = y.view(-1)[i.view(-1).nonzero()]
+
+        def assign_single_value_long(x, i, y):
+            b, l = x.size()
+            i = i + torch.arange(0, b*l, l, device=i.device).unsqueeze(1)
+            x.view(-1)[i.view(-1)] = y
+
+        def assign_multi_value_long(x, i, y):
+            b, l = x.size()
+            i = i + torch.arange(0, b*l, l, device=i.device).unsqueeze(1)
+            x.view(-1)[i.view(-1)] = y.view(-1)[i.view(-1)]
+
+        def convert_tokens(dictionary, tokens):
+            return ' '.join([dictionary[token] for token in tokens])
+
+        # def generate_non_autoregressive(model, encoder_states, tgt_tokens):
+        #     decoder_out = model.decoder(tgt_tokens, encoder_states)
+        #     # import pdb
+        #     # pdb.set_trace()
+        #     tgt_tokens, token_probs, _ = generate_step_with_prob(decoder_out)
+        #     return tgt_tokens, token_probs
+
+        def select_worst(token_probs, num_mask):
+            bsz, seq_len = token_probs.size()
+            masks = [token_probs[batch, :].topk(max(1, num_mask[batch]), largest=False, sorted=False)[1] for batch in range(bsz)]
+            masks = [torch.cat([mask, mask.new(seq_len - mask.size(0)).fill_(mask[0])], dim=0) for mask in masks]
+            return torch.stack(masks, dim=0)
+
+        bsz, seq_len = tgt_tokens.size()
+        pad_mask = tgt_tokens.eq(self.NULL_IDX)
+        seq_lens = seq_len - pad_mask.sum(dim=1)
+        
+        max_iterations = 20
+        iterations = seq_len if max_iterations is None else max_iterations
+        
+        # tgt_tokens, token_probs = generate_non_autoregressive(model, encoder_states, tgt_tokens)
+        decoder_out = model.decoder(tgt_tokens, encoder_states)
+        tgt_tokens, token_probs, _ = generate_step_with_prob(decoder_out)
+        
+        assign_single_value_byte(tgt_tokens, pad_mask, self.NULL_IDX)
+        assign_single_value_byte(token_probs, pad_mask, 1.0)
+        #print("Initialization: ", convert_tokens(tgt_dict, tgt_tokens[0]))
+        
+        for counter in range(1, iterations):
+            # import pdb
+            # pdb.set_trace()
+            num_mask = (seq_lens.float() * (1.0 - (counter / iterations))).long()
+
+            assign_single_value_byte(token_probs, pad_mask, 1.0)
+            mask_ind = select_worst(token_probs, num_mask)
+            assign_single_value_long(tgt_tokens, mask_ind, self.START_IDX)
+            assign_single_value_byte(tgt_tokens, pad_mask, self.NULL_IDX)
+
+            #print("Step: ", counter+1)
+            #print("Masking: ", convert_tokens(tgt_dict, tgt_tokens[0]))
+            decoder_out = model.decoder(tgt_tokens, encoder_states)
+            new_tgt_tokens, new_token_probs, all_token_probs = generate_step_with_prob(decoder_out)
+            
+            assign_multi_value_long(token_probs, mask_ind, new_token_probs)
+            assign_single_value_byte(token_probs, pad_mask, 1.0)
+            
+            assign_multi_value_long(tgt_tokens, mask_ind, new_tgt_tokens)
+            assign_single_value_byte(tgt_tokens, pad_mask, self.NULL_IDX)
+            #print("Prediction: ", convert_tokens(tgt_dict, tgt_tokens[0]))
+        
+        lprobs = token_probs.log().sum(-1)
+        return tgt_tokens, lprobs
+
 
     def _treesearch_factory(self, device):
         method = self.opt.get('inference', 'greedy')
@@ -1136,6 +1299,8 @@ class TorchGeneratorAgent(TorchAgent, ABC):
                 break
 
             score, incr_state = model.decoder(decoder_input, encoder_states, incr_state)
+            # import pdb
+            # pdb.set_trace()
             # only need the final hidden state to make the word prediction
             score = score[:, -1:, :]
             score = model.output(score)
