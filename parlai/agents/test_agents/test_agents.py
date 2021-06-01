@@ -9,6 +9,9 @@ MockTorchAgent.
 Mean for unit testing purposes only, and should not be invoked otherwise.
 """
 
+from typing import Optional
+from parlai.core.params import ParlaiParser
+from parlai.core.opt import Opt
 from parlai.core.torch_agent import TorchAgent, Output
 import torch
 from parlai.core.agents import Agent
@@ -60,11 +63,15 @@ class MockDict(Agent):
     def __len__(self):
         return 0
 
-    def add_cmdline_args(self, *args, **kwargs):
+    @classmethod
+    def add_cmdline_args(
+        cls, parser: ParlaiParser, partial_opt: Optional[Opt] = None
+    ) -> ParlaiParser:
         """
         Add CLI args.
         """
         pass
+        return parser
 
     def txt2vec(self, txt):
         """
@@ -107,7 +114,7 @@ class MockTorchAgent(TorchAgent):
         """
         Return confirmation of training.
         """
-        return Output(['Training {}!'.format(i) for i in range(len(batch.text_vec))])
+        return Output([f'Training {i}!' for i in range(batch.batchsize)])
 
     def eval_step(self, batch):
         """
@@ -115,10 +122,8 @@ class MockTorchAgent(TorchAgent):
         """
         return Output(
             [
-                'Evaluating {} (responding to {})!'.format(
-                    i, batch.observations[i]['text']
-                )
-                for i in range(len(batch.text_vec))
+                f'Evaluating {i} (responding to {batch.text_vec.tolist()})!'
+                for i in range(batch.batchsize)
             ]
         )
 
@@ -157,3 +162,19 @@ class SilentTorchAgent(TorchAgent):
         Null output.
         """
         return Output()
+
+
+class MockTrainUpdatesAgent(MockTorchAgent):
+    """
+    Simulate training updates.
+    """
+
+    def train_step(self, batch):
+        ret = super().train_step(batch)
+        update_freq = self.opt.get('update_freq', 1)
+        if update_freq == 1:
+            self._number_training_updates += 1
+        else:
+            self._number_grad_accum = (self._number_grad_accum + 1) % update_freq
+            self._number_training_updates += int(self._number_grad_accum == 0)
+        return ret

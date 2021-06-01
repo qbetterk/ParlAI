@@ -5,6 +5,7 @@
 # LICENSE file in the root directory of this source tree.
 
 import unittest
+from typing import Dict
 import torch
 import random
 
@@ -18,8 +19,12 @@ from parlai.core.metrics import (
     TimerMetric,
     aggregate_unnamed_reports,
     aggregate_named_reports,
+    InterDistinctMetric,
+    IntraDistinctMetric,
+    FairseqBleuMetric,
 )
 from parlai.core.torch_classifier_agent import ConfusionMatrixMetric, WeightedF1Metric
+import parlai.utils.testing as testing_utils
 
 
 class TestMetric(unittest.TestCase):
@@ -150,7 +155,7 @@ class TestMetrics(unittest.TestCase):
         m2.add('key', SumMetric(1))
         m3.add('key', SumMetric(2))
         m.add('key', SumMetric(3))
-        m.report()['key'] == 6
+        assert m.report()['key'] == 6
 
     def test_verymultithreaded(self):
         # legacy test, but useful all the same, for ensuring
@@ -176,6 +181,33 @@ class TestMetrics(unittest.TestCase):
             m2.add('key', SumMetric(1))
 
         assert m.report()['key'] == 32768 + 1
+
+    def test_recent(self):
+        m = Metrics()
+        m2 = Metrics(shared=m.share())
+        m.add('test', SumMetric(1))
+        assert m.report() == {'test': 1}
+        assert m.report_recent() == {'test': 1}
+        m.clear_recent()
+        m.add('test', SumMetric(2))
+        assert m.report() == {'test': 3}
+        assert m.report_recent() == {'test': 2}
+        assert m2.report() == {'test': 3}
+        assert m2.report_recent() == {}
+        m2.add('test', SumMetric(3))
+        assert m2.report() == {'test': 6}
+        assert m.report() == {'test': 6}
+        assert m2.report_recent() == {'test': 3}
+        assert m.report_recent() == {'test': 2}
+        m2.clear_recent()
+        assert m2.report() == {'test': 6}
+        assert m.report() == {'test': 6}
+        assert m2.report_recent() == {}
+        assert m.report_recent() == {'test': 2}
+        m.clear_recent()
+        assert m2.report() == {'test': 6}
+        assert m.report() == {'test': 6}
+        assert m.report_recent() == {}
 
 
 class TestAggregators(unittest.TestCase):
@@ -383,6 +415,85 @@ class TestAggregators(unittest.TestCase):
         assert agg['task2/weighted_f1'] == (2 / 3) * 0.5 + (4 / 7) * 0.5
         # all
         assert agg['weighted_f1'] == (0.5 + (2 / 3) * 0.5 + (4 / 7) * 0.5) / 2
+
+
+class TestDistinct(unittest.TestCase):
+    def test_inter_distinct(self):
+        # 3 n-grams, all appearing once
+        m = InterDistinctMetric.compute("this is some test", 2)
+        self.assertAlmostEqual(m, 1.0)
+        # 3-grams, each appearing twice
+        self.assertAlmostEqual(m + m, 0.5)
+
+    def test_inter_distinct_unigram(self):
+        m1 = InterDistinctMetric.compute("this test", 1)
+        self.assertAlmostEqual(m1, 1.0, delta=0.001)
+        m2 = InterDistinctMetric.compute("another test", 1)
+        self.assertAlmostEqual(m2, 1.0, delta=0.001)
+        # we now have 4 tokens, 3 words
+        self.assertAlmostEqual(m1 + m2, 3 / 4)
+
+    def test_intra_distinct(self):
+        # 4/5 are unique
+        m1 = IntraDistinctMetric.compute("this is some test test", 1)
+        self.assertAlmostEqual(m1, 4 / 5)
+        m2 = IntraDistinctMetric.compute("this test test test test", 1)
+        self.assertAlmostEqual(m2, 2 / 5)
+        self.assertAlmostEqual(m1 + m2, 3 / 5)
+
+
+@testing_utils.skipUnlessFairseq
+class TestFairseqBleuMetric(unittest.TestCase):
+    """
+    We're just going to compare that scores from Fairseq's Bleu scorer are the same as
+    our scorer.
+    """
+
+    def test_scorer(self):
+        import random
+
+        vocab_length = num_ex = 100
+        ex_length = 10
+        pad_idx = 0
+        eos_idx = 1
+        unk_idx = 2
+
+        try:
+            from fairseq.scoring.bleu import Scorer
+            from fairseq.scoring.bleu import BleuConfig
+
+            fairseq_metrics: Scorer = Scorer(
+                BleuConfig(pad=pad_idx, eos=eos_idx, unk=unk_idx)
+            )
+        except ImportError:
+            # Bleuconfig is a recent version of fairseq
+            fairseq_metrics: Scorer = Scorer(pad_idx, eos_idx, unk_idx)
+
+        parlai_metrics: Dict[int, FairseqBleuMetric] = {k: [] for k in range(1, 5)}
+
+        for _ in range(num_ex):
+            guess = torch.LongTensor(random.sample(range(vocab_length), ex_length))
+            answer = torch.LongTensor(random.sample(range(vocab_length), ex_length))
+
+            parlai_bleu = FairseqBleuMetric.compute_many(
+                guess, answer.unsqueeze(0), pad_idx, eos_idx, unk_idx
+            )
+            for i, bleu in enumerate(parlai_bleu):
+                parlai_metrics[i + 1].append(bleu)
+            fairseq_metrics.add(answer.int(), guess.int())
+
+        parlai_bleus = {}
+        for k, v in parlai_metrics.items():
+            total = v[0]
+            for vv in v[1:]:
+                total = total + vv
+            parlai_bleus[k] = total
+
+        fairseq_bleus = {k: fairseq_metrics.score(order=k) for k in range(1, 5)}
+
+        assert all(
+            parlai_bleus[k] == fairseq_bleus[k] for k in range(1, 5)
+        ), f'{parlai_bleus}\n{fairseq_bleus}'
 
 
 if __name__ == '__main__':

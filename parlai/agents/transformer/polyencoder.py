@@ -8,19 +8,19 @@
 Poly-encoder Agent.
 """
 
+from parlai.core.params import ParlaiParser
 from typing import Any, Dict, Optional, Tuple
 
 import torch
 
 from parlai.core.opt import Opt
 from parlai.core.torch_ranker_agent import TorchRankerAgent
+from parlai.core.torch_agent import Batch
+from parlai.utils.misc import recursive_getattr
+from parlai.utils.logging import logging
+
 from .biencoder import AddLabelFixedCandsTRA
-from .modules import (
-    BasicAttention,
-    MultiHeadAttention,
-    TransformerEncoder,
-    get_n_positions_from_options,
-)
+from .modules import BasicAttention, MultiHeadAttention, TransformerEncoder
 from .transformer import TransformerRankerAgent
 
 
@@ -33,12 +33,14 @@ class PolyencoderAgent(TorchRankerAgent):
     """
 
     @classmethod
-    def add_cmdline_args(cls, argparser):
+    def add_cmdline_args(
+        cls, parser: ParlaiParser, partial_opt: Optional[Opt] = None
+    ) -> ParlaiParser:
         """
         Add command-line arguments specifically for this agent.
         """
-        TransformerRankerAgent.add_cmdline_args(argparser)
-        agent = argparser.add_argument_group('Polyencoder Arguments')
+        TransformerRankerAgent.add_cmdline_args(parser, partial_opt=partial_opt)
+        agent = parser.add_argument_group('Polyencoder Arguments')
         agent.add_argument(
             '--polyencoder-type',
             type=str,
@@ -173,21 +175,32 @@ class PolyencoderAgent(TorchRankerAgent):
     def encode_candidates(self, padded_cands):
         """
         Encode candidates.
+
+        Called when encoding fixed candidates.
         """
         padded_cands = padded_cands.unsqueeze(1)
         _, _, cand_rep = self.model(cand_tokens=padded_cands)
         return cand_rep
 
-    def score_candidates(self, batch, cand_vecs, cand_encs=None):
+    def get_ctxt_rep(self, batch: Batch) -> Tuple[torch.Tensor, torch.BoolTensor]:
         """
-        Score candidates.
+        Encode context representation.
+        """
+        ctxt_rep, ctxt_rep_mask, _ = self.model(**self._model_context_input(batch))
+        return ctxt_rep, ctxt_rep_mask
 
-        The Poly-encoder encodes the candidate and context independently. Then, the
-        model applies additional attention before ultimately scoring a candidate.
+    def get_cand_rep(
+        self,
+        batch: Batch,
+        cand_vecs: torch.LongTensor,
+        cand_encs: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """
+        Encode candidates.
+
+        Called when scoring candidates.
         """
         bsz = self._get_batch_size(batch)
-        ctxt_rep, ctxt_rep_mask, _ = self.model(**self._model_context_input(batch))
-
         if cand_encs is not None:
             if bsz == 1:
                 cand_rep = cand_encs
@@ -197,13 +210,37 @@ class PolyencoderAgent(TorchRankerAgent):
         elif len(cand_vecs.shape) == 3:
             _, _, cand_rep = self.model(cand_tokens=cand_vecs)
         # bsz x seq len (if batch cands) or num_cands x seq len (if fixed cands)
-        elif len(cand_vecs.shape) == 2:
+        else:
+            assert len(cand_vecs.shape) == 2
             _, _, cand_rep = self.model(cand_tokens=cand_vecs.unsqueeze(1))
             num_cands = cand_rep.size(0)  # will be bsz if using batch cands
             cand_rep = cand_rep.expand(num_cands, bsz, -1).transpose(0, 1).contiguous()
-        scores = self.model(
+
+        return cand_rep
+
+    def get_scores(
+        self,
+        ctxt_rep: torch.Tensor,
+        ctxt_rep_mask: torch.BoolTensor,
+        cand_rep: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Score context with candidates.
+        """
+        return self.model(
             ctxt_rep=ctxt_rep, ctxt_rep_mask=ctxt_rep_mask, cand_rep=cand_rep
         )
+
+    def score_candidates(self, batch, cand_vecs, cand_encs=None):
+        """
+        Score candidates.
+
+        The Poly-encoder encodes the candidate and context independently. Then, the
+        model applies additional attention before ultimately scoring a candidate.
+        """
+        ctxt_rep, ctxt_rep_mask = self.get_ctxt_rep(batch)
+        cand_rep = self.get_cand_rep(batch, cand_vecs, cand_encs)
+        scores = self.get_scores(ctxt_rep, ctxt_rep_mask, cand_rep)
         return scores
 
     def _get_batch_size(self, batch) -> int:
@@ -235,6 +272,35 @@ class PolyencoderAgent(TorchRankerAgent):
         if self.model.type == 'codes' and 'codes' not in state_dict:
             state_dict['codes'] = self.model.codes
         super().load_state_dict(state_dict)
+
+    def _resize_token_embeddings(self, state_dict, msg=None):
+        """
+        Resize the token embeddings when adding extra special tokens.
+
+        H/t TransformerGenerator._resize_token_embeddings for inspiration.
+        """
+        # map extra special tokens carefully
+        new_size = self.model.encoder_ctxt.embeddings.weight.size()[0]
+        orig_size = state_dict['encoder_ctxt.embeddings.weight'].size()[0]
+        logging.info(f'Resizing token embeddings from {orig_size} to {new_size}')
+        if new_size <= orig_size:
+            # new size should be greater than original size,
+            # as we are adding special tokens
+            raise RuntimeError(msg)
+
+        for emb_weights in [
+            'encoder_ctxt.embeddings.weight',
+            'encoder_cand.embeddings.weight',
+        ]:
+            # get new_embs
+            old_embs = state_dict[emb_weights]
+            new_embs = recursive_getattr(self.model, emb_weights).to(old_embs.device)
+            # copy over old weights
+            new_embs.data[:orig_size, :] = old_embs.data[:orig_size, :]
+            # reset in state dict
+            state_dict[emb_weights] = new_embs
+
+        return state_dict
 
 
 class PolyEncoderModule(torch.nn.Module):
@@ -323,29 +389,15 @@ class PolyEncoderModule(torch.nn.Module):
         :return:
             a TransformerEncoder, initialized correctly
         """
-        n_positions = get_n_positions_from_options(opt)
         embeddings = self._get_embeddings(
             dict_=dict_, null_idx=null_idx, embedding_size=opt['embedding_size']
         )
         return TransformerEncoder(
-            n_heads=opt['n_heads'],
-            n_layers=opt['n_layers'],
-            embedding_size=opt['embedding_size'],
-            ffn_size=opt['ffn_size'],
-            vocabulary_size=len(dict_),
+            opt=opt,
             embedding=embeddings,
-            dropout=opt['dropout'],
-            attention_dropout=opt['attention_dropout'],
-            relu_dropout=opt['relu_dropout'],
+            vocabulary_size=len(dict_),
             padding_idx=null_idx,
-            learn_positional_embeddings=opt['learn_positional_embeddings'],
-            embeddings_scale=opt['embeddings_scale'],
             reduction_type=reduction_type,
-            n_positions=n_positions,
-            n_segments=opt.get('n_segments', 2),
-            activation=opt['activation'],
-            variant=opt['variant'],
-            output_scaling=opt['output_scaling'],
         )
 
     def _get_embeddings(self, dict_, null_idx, embedding_size):
@@ -379,7 +431,7 @@ class PolyEncoderModule(torch.nn.Module):
         if isinstance(attention_layer, PolyBasicAttention):
             return attention_layer(queries, keys, mask_ys=mask, values=values)
         elif isinstance(attention_layer, MultiHeadAttention):
-            return attention_layer(queries, keys, values, mask)
+            return attention_layer(queries, keys, values, mask)[0]
         else:
             raise Exception('Unrecognized type of attention')
 
@@ -563,9 +615,12 @@ class IRFriendlyPolyencoderAgent(AddLabelFixedCandsTRA, PolyencoderAgent):
     """
 
     @classmethod
-    def add_cmdline_args(cls, argparser):
+    def add_cmdline_args(
+        cls, parser: ParlaiParser, partial_opt: Optional[Opt] = None
+    ) -> ParlaiParser:
         """
         Add cmd line args.
         """
-        AddLabelFixedCandsTRA.add_cmdline_args(argparser)
-        PolyencoderAgent.add_cmdline_args(argparser)
+        AddLabelFixedCandsTRA.add_cmdline_args(parser, partial_opt=partial_opt)
+        PolyencoderAgent.add_cmdline_args(parser, partial_opt=partial_opt)
+        return parser

@@ -9,6 +9,10 @@ Code for LR Schedulers.
 See ParlAILRScheduler (super class) and subclasses for detailed documentation
 """
 
+import math
+from typing import Optional
+from parlai.core.params import ParlaiParser
+from parlai.core.opt import Opt
 from abc import abstractmethod
 from torch import optim
 import numpy as np
@@ -129,8 +133,10 @@ class ParlAILRScheduler(object):
         return self.warmup_scheduler.state_dict()
 
     @classmethod
-    def add_cmdline_args(cls, argparser):
-        lr_group = argparser.add_argument_group('Learning Rate Scheduler')
+    def add_cmdline_args(
+        cls, parser: ParlaiParser, partial_opt: Optional[Opt] = None
+    ) -> ParlaiParser:
+        lr_group = parser.add_argument_group('Learning Rate Scheduler')
         lr_group.add_argument(
             '--lr-scheduler',
             type=str,
@@ -151,14 +157,6 @@ class ParlAILRScheduler(object):
             default=0.5,
             help='Decay factor for LR scheduler, or how much LR is multiplied by '
             'when it is lowered.',
-        )
-        lr_group.add_argument(
-            '--max-lr-steps',
-            type=int,
-            default=-1,
-            help='Number of train steps the scheduler should take after warmup. '
-            'Training is terminated after this many steps. This should only be '
-            'set for --lr-scheduler cosine or linear',
         )
         lr_group.add_argument(
             '--invsqrt-lr-decay-gamma',
@@ -191,6 +189,7 @@ class ParlAILRScheduler(object):
             hidden=True,
             help='Accumulate gradients N times before performing an optimizer.step().',
         )
+        return parser
 
     @classmethod
     def lr_scheduler_factory(cls, opt, optimizer, states, hard_reset=False):
@@ -216,7 +215,11 @@ class ParlAILRScheduler(object):
         decay = opt.get('lr_scheduler_decay', 0.5)
         warmup_updates = opt.get('warmup_updates', -1)
         warmup_rate = opt.get('warmup_rate', 1e-4)
-        max_lr_steps = opt.get('max_lr_steps', -1)
+        max_lr_steps = opt.get('max_train_steps', -1)
+        if opt.get('max_lr_steps', -1) > 0:
+            raise ValueError(
+                '--max-lr-steps is **DEPRECATED**; please set --max-train-steps directly'
+            )
         invsqrt_lr_decay_gamma = opt.get('invsqrt_lr_decay_gamma', -1)
 
         if opt.get('lr_scheduler') == 'none':
@@ -460,9 +463,12 @@ class CosineLRScheduler(ParlAILRScheduler):
         """
         super().__init__(hard_reset, warmup_updates, warmup_rate)
         if max_lr_steps <= 0:
-            raise ValueError('--lr-scheduler cosine requires setting --max-lr-steps')
+            raise ValueError('--lr-scheduler cosine requires setting --max-train-steps')
         self.max_lr_steps = max_lr_steps
-        self.scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, max_lr_steps)
+        self.scheduler = optim.lr_scheduler.LambdaLR(optimizer, self._cosine_lr)
+
+    def _cosine_lr(self, step):
+        return math.cos(math.pi * step / (2 * self.max_lr_steps))
 
     def train_step(self, scheduler_steps):
         if scheduler_steps >= self.max_lr_steps:
@@ -495,7 +501,7 @@ class LinearLRScheduler(ParlAILRScheduler):
         """
         super().__init__(hard_reset, warmup_updates, warmup_rate)
         if max_lr_steps <= 0:
-            raise ValueError('--lr-scheduler linear requires setting --max-lr-steps')
+            raise ValueError('--lr-scheduler linear requires setting --max-train-steps')
         self.max_lr_steps = max_lr_steps
         self.scheduler = optim.lr_scheduler.LambdaLR(optimizer, self._linear_lr)
 

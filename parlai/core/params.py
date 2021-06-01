@@ -40,6 +40,7 @@ def print_git_commit():
         return
     root = os.path.dirname(os.path.dirname(parlai.__file__))
     internal_root = os.path.join(root, 'parlai_internal')
+    fb_root = os.path.join(root, 'parlai_fb')
     try:
         git_ = git.Git(root)
         current_commit = git_.rev_parse('HEAD')
@@ -53,6 +54,15 @@ def print_git_commit():
         git_ = git.Git(internal_root)
         internal_commit = git_.rev_parse('HEAD')
         logging.info(f'Current internal commit: {internal_commit}')
+    except git.GitCommandNotFound:
+        pass
+    except git.GitCommandError:
+        pass
+
+    try:
+        git_ = git.Git(fb_root)
+        fb_commit = git_.rev_parse('HEAD')
+        logging.info(f'Current fb commit: {fb_commit}')
     except git.GitCommandNotFound:
         pass
     except git.GitCommandError:
@@ -176,8 +186,9 @@ def str2class(value):
     """
     From import path string, returns the class specified.
 
-    For example, the string 'parlai.agents.drqa.drqa:SimpleDictionaryAgent' returns
-    <class 'parlai.agents.drqa.drqa.SimpleDictionaryAgent'>.
+    For example, the string
+    'parlai.agents.hugging_face.dict:Gpt2DictionaryAgent' returns
+    <class 'parlai.agents.hugging_face.dict.Gpt2DictionaryAgent'>.
     """
     if ':' not in value:
         raise RuntimeError('Use a colon before the name of the class.')
@@ -289,7 +300,7 @@ class ParlaiParser(argparse.ArgumentParser):
     modules by passing this object and calling ``add_arg()`` or
     ``add_argument()`` on it.
 
-    For example, see ``parlai.core.dict.DictionaryAgent.add_cmdline_args``.
+    For an example, see ``parlai.core.dict.DictionaryAgent.add_cmdline_args``.
 
     :param add_parlai_args:
         (default True) initializes the default arguments for ParlAI
@@ -303,7 +314,7 @@ class ParlaiParser(argparse.ArgumentParser):
         self, add_parlai_args=True, add_model_args=False, description=None, **kwargs
     ):
         """
-        Initialize the ParlAI argparser.
+        Initialize the ParlAI parser.
         """
         if 'formatter_class' not in kwargs:
             kwargs['formatter_class'] = CustomHelpFormatter
@@ -738,6 +749,19 @@ class ParlaiParser(argparse.ArgumentParser):
             choices={None, 'full', 'batchsort'},
             help='Use dynamic batching',
         )
+        parlai.add_argument(
+            '-v',
+            '--verbose',
+            dest='verbose',
+            action='store_true',
+            help='Print all messages',
+        )
+        parlai.add_argument(
+            '--debug',
+            dest='is_debug',
+            action='store_true',
+            help='Enables some debug behavior',
+        )
         self.add_parlai_data_path(parlai)
 
     def add_distributed_training_args(self):
@@ -747,13 +771,6 @@ class ParlaiParser(argparse.ArgumentParser):
         grp = self.add_argument_group('Distributed Training')
         grp.add_argument(
             '--distributed-world-size', type=int, help='Number of workers.'
-        )
-        grp.add_argument(
-            '--verbose',
-            type='bool',
-            default=False,
-            help='All workers print output.',
-            hidden=True,
         )
         return grp
 
@@ -788,14 +805,21 @@ class ParlaiParser(argparse.ArgumentParser):
             '--dict-class', hidden=True, help='the class of the dictionary agent uses'
         )
 
-    def add_model_subargs(self, model):
+    def add_model_subargs(self, model: str, partial: Opt):
         """
         Add arguments specific to a particular model.
         """
         agent = load_agent_module(model)
         try:
             if hasattr(agent, 'add_cmdline_args'):
-                agent.add_cmdline_args(self)
+                agent.add_cmdline_args(self, partial)
+        except TypeError as typ:
+            raise TypeError(
+                f"Agent '{model}' appears to have signature "
+                "add_cmdline_args(argparser) but we have updated the signature "
+                "to add_cmdline_args(argparser, partial_opt). For details, see "
+                "https://github.com/facebookresearch/ParlAI/pull/3328."
+            ) from typ
         except argparse.ArgumentError:
             # already added
             pass
@@ -807,7 +831,7 @@ class ParlaiParser(argparse.ArgumentParser):
             # already added
             pass
 
-    def add_task_args(self, task):
+    def add_task_args(self, task: str, partial: Opt):
         """
         Add arguments specific to the specified task.
         """
@@ -815,12 +839,25 @@ class ParlaiParser(argparse.ArgumentParser):
             agent = load_teacher_module(t)
             try:
                 if hasattr(agent, 'add_cmdline_args'):
-                    agent.add_cmdline_args(self)
+                    agent.add_cmdline_args(self, partial)
+            except TypeError as typ:
+                raise TypeError(
+                    f"Task '{task}' appears to have signature "
+                    "add_cmdline_args(argparser) but we have updated the signature "
+                    "to add_cmdline_args(argparser, partial_opt). For details, see "
+                    "https://github.com/facebookresearch/ParlAI/pull/3328."
+                ) from typ
             except argparse.ArgumentError:
                 # already added
                 pass
 
-    def add_world_args(self, task, interactive_task, selfchat_task):
+    def add_world_args(
+        self,
+        task: str,
+        interactive_task: Optional[str],
+        selfchat_task: Optional[str],
+        partial: Opt,
+    ):
         """
         Add arguments specific to the world.
         """
@@ -829,10 +866,17 @@ class ParlaiParser(argparse.ArgumentParser):
         )
         if world_class is not None and hasattr(world_class, 'add_cmdline_args'):
             try:
-                world_class.add_cmdline_args(self)
+                world_class.add_cmdline_args(self, partial)
             except argparse.ArgumentError:
                 # already added
                 pass
+            except TypeError:
+                raise TypeError(
+                    f"World '{task}' appears to have signature "
+                    "add_cmdline_args(argparser) but we have updated the signature "
+                    "to add_cmdline_args(argparser, partial_opt). For details, see "
+                    "https://github.com/facebookresearch/ParlAI/pull/3328."
+                )
 
     def add_image_args(self, image_mode):
         """
@@ -865,8 +909,15 @@ class ParlaiParser(argparse.ArgumentParser):
         parsed = vars(self.parse_known_args(args, nohelp=True)[0])
         # Also load extra args options if a file is given.
         if parsed.get('init_opt') is not None:
-            self._load_known_opts(parsed.get('init_opt'), parsed)
+            try:
+                self._load_known_opts(parsed.get('init_opt'), parsed)
+            except FileNotFoundError:
+                # don't die if -o isn't found here. See comment in second call
+                # later on.
+                pass
         parsed = self._infer_datapath(parsed)
+
+        partial = Opt(parsed)
 
         # find which image mode specified if any, and add additional arguments
         image_mode = parsed.get('image_mode', None)
@@ -876,15 +927,15 @@ class ParlaiParser(argparse.ArgumentParser):
         # find which task specified if any, and add its specific arguments
         task = parsed.get('task', None)
         if task is not None:
-            self.add_task_args(task)
+            self.add_task_args(task, partial)
         evaltask = parsed.get('evaltask', None)
         if evaltask is not None:
-            self.add_task_args(evaltask)
+            self.add_task_args(evaltask, partial)
 
         # find which model specified if any, and add its specific arguments
         model = get_model_name(parsed)
         if model is not None:
-            self.add_model_subargs(model)
+            self.add_model_subargs(model, partial)
 
         # add world args, if we know a priori which world is being used
         if task is not None:
@@ -892,7 +943,17 @@ class ParlaiParser(argparse.ArgumentParser):
                 task,
                 parsed.get('interactive_task', False),
                 parsed.get('selfchat_task', False),
+                partial,
             )
+
+        # reparse args now that we've inferred some things.  specifically helps
+        # with a misparse of `-opt` as `-o pt`, which causes opt loading to
+        # try to load the file "pt" which doesn't exist.
+        # After adding model arguments, -opt becomes known (it's in TorchAgent),
+        # and we parse the `-opt` value correctly.
+        parsed = vars(self.parse_known_args(args, nohelp=True)[0])
+        if parsed.get('init_opt') is not None:
+            self._load_known_opts(parsed.get('init_opt'), parsed)
 
         # reset parser-level defaults over any model-level defaults
         try:
@@ -910,11 +971,29 @@ class ParlaiParser(argparse.ArgumentParser):
         if args is None:
             # args default to the system args
             args = _sys.argv[1:]
+
         args = fix_underscores(args)
+        # handle the single dash stuff. See _handle_single_dash_addarg for info
+        actions = set()
+        for action in self._actions:
+            actions.update(action.option_strings)
+        if _sys.version_info >= (3, 8, 0):
+            newargs = []
+            for arg in args:
+                darg = f'-{arg}'
+                if arg.startswith('-') and not arg.startswith('--') and darg in actions:
+                    newargs.append(darg)
+                else:
+                    newargs.append(arg)
+            args = newargs
 
         if nohelp:
             # ignore help
-            args = [a for a in args if a != '-h' and a != '--help' and a != '--helpall']
+            args = [
+                a
+                for a in args
+                if a != '-h' and a != '--help' and a != '--helpall' and a != '--h'
+            ]
         return super().parse_known_args(args, namespace)
 
     def _load_known_opts(self, optfile, parsed):
@@ -924,7 +1003,7 @@ class ParlaiParser(argparse.ArgumentParser):
         Called before args are parsed; ``_load_opts`` is used for actually overriding
         opts after they are parsed.
         """
-        new_opt = Opt.load(optfile)
+        new_opt = Opt.load_init(optfile)
         for key, value in new_opt.items():
             # existing command line parameters take priority.
             if key not in parsed or parsed[key] is None:
@@ -932,12 +1011,12 @@ class ParlaiParser(argparse.ArgumentParser):
 
     def _load_opts(self, opt):
         optfile = opt.get('init_opt')
-        new_opt = Opt.load(optfile)
+        new_opt = Opt.load_init(optfile)
         for key, value in new_opt.items():
             # existing command line parameters take priority.
             if key not in opt:
                 if opt.get('allow_missing_init_opts', False):
-                    logging.warn(
+                    logging.warning(
                         f'The "{key}" key in {optfile} will not be loaded, because it '
                         f'does not exist in the target opt.'
                     )
@@ -1076,7 +1155,6 @@ class ParlaiParser(argparse.ArgumentParser):
 
         self._process_args_to_opts(args)
         print_announcements(self.opt)
-        logging.set_log_level(self.opt.get('loglevel', 'info').upper())
 
         assert '_subparser' not in self.opt
 
@@ -1224,12 +1302,40 @@ class ParlaiParser(argparse.ArgumentParser):
             kwargs['type'] = 'bool'
         return kwargs, action_attr
 
+    def _handle_single_dash_addarg(self, args):
+        """
+        Fixup argparse for parlai-style short args.
+
+        In python 3.8, argparsing was changed such that short arguments are not
+        required to have spaces after them. This causes our many short args to
+        be misinterpetted by the parser. For example `-emb` gets parsed as
+        `-e mb`.
+
+        Here we rewrite them into long args to get around the nonsense.
+        """
+        if _sys.version_info < (3, 8, 0):
+            # older python works fine
+            return args
+
+        # need the long options specified first, or `dest` will get set to
+        # the short name on accident!
+        out_long = []
+        out_short = []
+        for arg in args:
+            if arg.startswith('-') and not arg.startswith('--'):
+                out_short.append(f'-{arg}')
+            else:
+                out_long.append(arg)
+        # keep long args in front so they are used for the destination
+        return out_long + out_short
+
     def add_argument(self, *args, **kwargs):
         """
         Override to convert underscores to hyphens for consistency.
         """
         kwargs, newattr = self._handle_custom_options(kwargs)
-        action = super().add_argument(*fix_underscores(args), **kwargs)
+        args = self._handle_single_dash_addarg(fix_underscores(args))
+        action = super().add_argument(*args, **kwargs)
         for k, v in newattr.items():
             setattr(action, k, v)
         return action
@@ -1243,7 +1349,8 @@ class ParlaiParser(argparse.ArgumentParser):
 
         def ag_add_argument(*args, **kwargs):
             kwargs, newattr = self._handle_custom_options(kwargs)
-            action = original_add_arg(*fix_underscores(args), **kwargs)
+            args = self._handle_single_dash_addarg(fix_underscores(args))
+            action = original_add_arg(*args, **kwargs)
             for k, v in newattr.items():
                 setattr(action, k, v)
             return action

@@ -106,17 +106,14 @@ class TestDynamicBatching(unittest.TestCase):
                 dict(
                     model_file='zoo:unittest/transformer_generator2/model',
                     task='integration_tests:multiturn_candidate',
-                    save_world_logs=True,
+                    world_logs=save_report,
                     report_filename=save_report,
                     truncate=1024,
                     dynamic_batching='full',
                     batchsize=4,
                 )
             )
-            convo_fle = (
-                str(save_report)
-                + '_integration_tests:multiturn_candidate_replies.jsonl'
-            )
+            convo_fle = str(save_report) + '.jsonl'
             convos = Conversations(convo_fle)
             for convo in convos:
                 self.assertEquals(len(convo), 2 * 4)  # each episode is 4 turns
@@ -134,6 +131,18 @@ class TestDynamicBatching(unittest.TestCase):
     def test_batchsize4(self):
         # intentionally an edgecase in the world
         self._test_correct_processed(NUM_TEST, batchsize=4)
+
+    def test_chunky(self):
+        """
+        Test dynamic batching with chunk teachers end to end.
+        """
+        self._test_correct_processed(
+            NUM_TEST,
+            model='test_agents/unigram',  # important we use a real model here
+            task='integration_tests:chunky',
+            datatype='train:stream',
+            num_epochs=2,  # important we use num epochs > 1
+        )
 
 
 class TestBatchSort(unittest.TestCase):

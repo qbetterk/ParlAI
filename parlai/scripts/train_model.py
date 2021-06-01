@@ -16,9 +16,8 @@ The user must provide a model (with `--model`) and a task (with
 ## Examples
 
 ```shell
-parlai train_model -m ir_baseline -t dialog_babi:Task:1 -mf /tmp/model
-parlai train_model -m seq2seq -t babi:Task10k:1 -mf '/tmp/model' -bs 32 -lr 0.5 -hs 128
-parlai train_model -m drqa -t babi:Task10k:1 -mf /tmp/model -bs 10
+parlai train_model --model ir_baseline --task dialog_babi:Task:1 --model-file /tmp/model
+parlai train_model --model seq2seq --task babi:Task10k:1 --model-file '/tmp/model' --batchsize 32 --learningrate 0.5
 ```
 """  # noqa: E501
 
@@ -28,18 +27,20 @@ parlai train_model -m drqa -t babi:Task10k:1 -mf /tmp/model -bs 10
 import json
 import numpy as np
 import signal
+from typing import Tuple
 
 from parlai.core.metrics import Metric
 from parlai.core.agents import create_agent, create_agent_from_shared
 from parlai.core.exceptions import StopTrainException
-from parlai.core.logs import TensorboardLogger
+from parlai.core.logs import TensorboardLogger, WandbLogger
 from parlai.core.metrics import (
     aggregate_named_reports,
     aggregate_unnamed_reports,
     dict_report,
 )
+from parlai.core.opt import Opt
 from parlai.core.params import ParlaiParser, print_announcements
-from parlai.core.worlds import create_task
+from parlai.core.worlds import create_task, World
 from parlai.scripts.build_dict import build_dict, setup_args as setup_dict_args
 from parlai.utils.distributed import (
     sync_object,
@@ -52,6 +53,20 @@ from parlai.utils.misc import Timer, nice_report
 from parlai.core.script import ParlaiScript, register_script
 import parlai.utils.logging as logging
 from parlai.utils.io import PathManager
+
+
+def _num_else_inf(opt: Opt, key: str, distributed_warn=False):
+    if opt[key] > 0:
+        if distributed_warn and is_distributed():
+            nicekey = '--' + key.replace('_', '-')
+            logging.warning(
+                f'Using {nicekey} in distributed mode can lead to slowdowns. '
+                'See https://github.com/facebookresearch/ParlAI/pull/3379 for more info.'
+            )
+        value = opt[key]
+    else:
+        value = float('inf')
+    return value
 
 
 def setup_args(parser=None) -> ParlaiParser:
@@ -78,16 +93,56 @@ def setup_args(parser=None) -> ParlaiParser:
         hidden=True,
         help='Eval time batch size (defaults to same as -bs)',
     )
+    train.add_argument(
+        '--eval-dynamic-batching',  # FIXME: see https://github.com/facebookresearch/ParlAI/issues/3367
+        default=None,
+        type='nonestr',
+        choices={None, 'off', 'full', 'batchsort'},
+        help=(
+            'Set dynamic batching at evaluation time. Set to off for '
+            'train-only dynamic batching. Set to none (default) to use same '
+            'setting as --dynamic-batching.'
+        ),
+    )
+    train.add_argument(
+        '--num-workers',
+        default=0,
+        type=int,
+        help='Number of background workers (training only)',
+    )
     train.add_argument('--display-examples', type='bool', default=False, hidden=True)
     train.add_argument('-eps', '--num-epochs', type=float, default=-1)
     train.add_argument('-ttim', '--max-train-time', type=float, default=-1)
-    train.add_argument('-ltim', '--log-every-n-secs', type=float, default=10)
+    train.add_argument(
+        '-tstep',
+        '--max-train-steps',
+        '--max-lr-steps',
+        type=int,
+        default=-1,
+        help='End training after n model updates',
+    )
+    train.add_argument('-ltim', '--log-every-n-secs', type=float, default=-1)
+    train.add_argument(
+        '-lstep',
+        '--log-every-n-steps',
+        type=int,
+        default=50,
+        help='Log every n training steps',
+    )
     train.add_argument(
         '-vtim',
         '--validation-every-n-secs',
         type=float,
         default=-1,
         help='Validate every n seconds. Saves model to model_file '
+        '(if set) whenever best val metric is found',
+    )
+    train.add_argument(
+        '-vstep',
+        '--validation-every-n-steps',
+        type=int,
+        default=-1,
+        help='Validate every n training steps. Saves model to model_file '
         '(if set) whenever best val metric is found',
     )
     train.add_argument(
@@ -196,7 +251,8 @@ def setup_args(parser=None) -> ParlaiParser:
         help='Report micro-averaged metrics instead of macro averaged metrics.',
         recommended=False,
     )
-    TensorboardLogger.add_cmdline_args(parser)
+    TensorboardLogger.add_cmdline_args(parser, partial_opt=None)
+    WandbLogger.add_cmdline_args(parser, partial_opt=None)
 
     parser = setup_dict_args(parser)
     return parser
@@ -229,6 +285,15 @@ def load_eval_worlds(agent, opt, datatype):
     if opt.get('eval_batchsize'):
         # override eval time batchsize
         opt['batchsize'] = opt['eval_batchsize']
+    if opt.get('eval_dynamic_batching'):
+        # FIXME: see issue tracked in https://github.com/facebookresearch/ParlAI/issues/3367
+        # override eval time dynamic batching settings
+        eval_dyn_batch = (
+            None
+            if opt['eval_dynamic_batching'] == 'off'
+            else opt['eval_dynamic_batching']
+        )
+        opt['dynamic_batching'] = eval_dyn_batch
 
     tasks = opt['task'].split(',')
     worlds = []
@@ -289,27 +354,28 @@ class TrainLoop:
         self.save_time = Timer()
 
         self.parleys = 0
-        self.max_num_epochs = (
-            opt['num_epochs'] if opt['num_epochs'] > 0 else float('inf')
+        self._train_steps = 0
+        self._last_log_steps = 0
+        self.update_freq = opt.get('update_freq', 1)
+
+        self.max_num_epochs = _num_else_inf(opt, 'num_epochs', distributed_warn=True)
+        self.max_train_time = _num_else_inf(
+            opt, 'max_train_time', distributed_warn=True
         )
-        self.max_train_time = (
-            opt['max_train_time'] if opt['max_train_time'] > 0 else float('inf')
+        self.max_train_steps = _num_else_inf(opt, 'max_train_steps')
+        self.log_every_n_secs = _num_else_inf(
+            opt, 'log_every_n_secs', distributed_warn=True
         )
-        self.log_every_n_secs = (
-            opt['log_every_n_secs'] if opt['log_every_n_secs'] > 0 else float('inf')
+        self.log_every_n_steps = _num_else_inf(opt, 'log_every_n_steps')
+        self.val_every_n_secs = _num_else_inf(
+            opt, 'validation_every_n_secs', distributed_warn=True
         )
-        self.val_every_n_secs = (
-            opt['validation_every_n_secs']
-            if opt['validation_every_n_secs'] > 0
-            else float('inf')
+        self.val_every_n_epochs = _num_else_inf(
+            opt, 'validation_every_n_epochs', distributed_warn=True
         )
-        self.save_every_n_secs = (
-            opt['save_every_n_secs'] if opt['save_every_n_secs'] > 0 else float('inf')
-        )
-        self.val_every_n_epochs = (
-            opt['validation_every_n_epochs']
-            if opt['validation_every_n_epochs'] > 0
-            else float('inf')
+        self.val_every_n_steps = _num_else_inf(opt, 'validation_every_n_steps')
+        self.save_every_n_secs = _num_else_inf(
+            opt, 'save_every_n_secs', distributed_warn=True
         )
 
         # smart defaults for --validation-metric-mode
@@ -321,6 +387,7 @@ class TrainLoop:
             opt['validation_metric_mode'] = 'max'
 
         self.last_valid_epoch = 0
+        self._last_valid_steps = 0
         self.valid_optim = 1 if opt['validation_metric_mode'] == 'max' else -1
         self.train_reports = []
         self.valid_reports = []
@@ -343,8 +410,13 @@ class TrainLoop:
                 self.parleys = obj.get('parleys', 0)
                 self._preempted_epochs = obj.get('total_epochs', 0)
                 self.train_time.total = obj.get('train_time', 0)
+                self._train_steps = obj.get('train_steps', 0)
                 self.impatience = obj.get('impatience', 0)
                 self.valid_reports = obj.get('valid_reports', [])
+                if self.valid_reports:
+                    self.last_valid_epoch = self.valid_reports[-1].get(
+                        'total_epochs', 0.0
+                    )
                 self.train_reports = obj.get('train_reports', [])
                 if 'best_valid' in obj:
                     self.best_valid = obj['best_valid']
@@ -362,6 +434,9 @@ class TrainLoop:
 
         if opt['tensorboard_log'] and is_primary_worker():
             self.tb_logger = TensorboardLogger(opt)
+        if opt['wandb_log'] and is_primary_worker():
+            model = self.agent.model if hasattr(self.agent, 'model') else None
+            self.wb_logger = WandbLogger(opt, model)
 
     def save_model(self, suffix=None):
         """
@@ -397,6 +472,7 @@ class TrainLoop:
                 {
                     'parleys': self.parleys,
                     'train_time': self.train_time.time(),
+                    'train_steps': self._train_steps,
                     'total_epochs': self._total_epochs,
                     'train_reports': self.train_reports,
                     'valid_reports': self.valid_reports,
@@ -426,6 +502,7 @@ class TrainLoop:
         v = dict_report(valid_report)
         v['train_time'] = self.train_time.time()
         v['parleys'] = self.parleys
+        v['train_steps'] = self._train_steps
         v['total_exs'] = self._total_exs
         v['total_epochs'] = self._total_epochs
         self.valid_reports.append(v)
@@ -435,6 +512,7 @@ class TrainLoop:
             self.tb_logger.log_metrics('valid', self.parleys, valid_report)
             # flush on a validation
             self.tb_logger.flush()
+<<<<<<< HEAD
         # # saving
         # if (
         #     opt.get('model_file')
@@ -444,6 +522,20 @@ class TrainLoop:
         #     logging.info(f"saving model checkpoint: {opt['model_file']}.checkpoint_ep{self._total_epochs:.0f}")
         #     self.save_model(f'.checkpoint_ep{self._total_epochs:.0f}')
 
+=======
+        if opt['wandb_log'] and is_primary_worker():
+            valid_report['total_exs'] = self._total_exs
+            self.wb_logger.log_metrics('valid', self.parleys, valid_report)
+
+        # saving
+        if (
+            opt.get('model_file')
+            and opt.get('save_after_valid')
+            and is_primary_worker()
+        ):
+            logging.info(f"saving model checkpoint: {opt['model_file']}.checkpoint")
+            self.save_model('.checkpoint')
+>>>>>>> f302b121e0a37ec011e9bd468b317909ba2d74f5
 
         # send valid metrics to agent if the agent wants them
         if hasattr(self.agent, 'receive_metrics'):
@@ -517,7 +609,8 @@ class TrainLoop:
             cnt = valid_world.report().get('exs') or 0
 
         valid_report = valid_world.report()
-        valid_world.reset()  # make sure world doesn't remember valid data
+        if opt.get('validation_share_agent', False):
+            valid_world.reset()  # make sure world doesn't remember valid data
 
         return valid_report
 
@@ -579,7 +672,9 @@ class TrainLoop:
         all_versions = all_gather_list(metrics)
         return aggregate_unnamed_reports(all_versions)
 
-    def _compute_eta(self, epochs_completed, time_elapsed):
+    def _compute_eta(
+        self, epochs_completed: float, time_elapsed: float, steps_taken: int
+    ):
         """
         Compute the estimated seconds remaining in training.
 
@@ -602,7 +697,58 @@ class TrainLoop:
             if eta is None or time_left < eta:
                 eta = time_left
 
+        max_train_steps = self.opt.get('max_train_steps', -1)
+        if max_train_steps > 0 and steps_taken > 0:
+            steps_progress = steps_taken / max_train_steps
+            eta = (1 - steps_progress) * time_elapsed / steps_progress
+
         return eta
+
+    def _get_time(self, world: World) -> Tuple[float, float, float]:
+        """
+        Return train, log, and validate timing.
+
+        If relying on the time for validation/logging/max train time purposes,
+        we sync and return primary worker's time.
+
+        Otherwise, it's not super relevant what we do here.
+
+        **SIDE EFFECT**: Update _total_epochs trained.
+
+        :param world:
+            current running world
+
+        :return (train, log, valid):
+            return time for each of train, log, and validation
+        """
+        if (
+            self.max_train_time < float('inf')
+            or self.log_every_n_secs < float('inf')
+            or self.val_every_n_secs < float('inf')
+            or self.val_every_n_epochs < float('inf')
+            or self.max_num_epochs < float('inf')
+        ):
+            self._total_epochs = self._preempted_epochs + sum(
+                all_gather_list(world.get_total_epochs())
+            )
+            train_time, log_time, validate_time = sync_object(
+                (
+                    self.train_time.time(),
+                    self.log_time.time(),
+                    self.validate_time.time(),
+                )
+            )
+        else:
+            train_time, log_time, validate_time = (
+                self.train_time.time(),
+                self.log_time.time(),
+                self.validate_time.time(),
+            )
+            self._total_epochs = self._preempted_epochs + (
+                num_workers() * world.get_total_epochs()
+            )
+
+        return train_time, log_time, validate_time
 
     def log(self):
         """
@@ -621,33 +767,42 @@ class TrainLoop:
         train_report_trainstats['total_epochs'] = self._total_epochs
         train_report_trainstats['total_exs'] = self._total_exs
         train_report_trainstats['parleys'] = self.parleys
+        train_report_trainstats['train_steps'] = self._train_steps
         train_report_trainstats['train_time'] = self.train_time.time()
         self.train_reports.append(train_report_trainstats)
 
         # time elapsed
         logs.append(f'time:{self.train_time.time():.0f}s')
         logs.append(f'total_exs:{self._total_exs}')
+        logs.append(f'total_steps:{self._train_steps}')
 
         if self._total_epochs >= 0:
             # only if it's unbounded
             logs.append(f'epochs:{self._total_epochs:.2f}')
 
-        time_left = self._compute_eta(self._total_epochs, self.train_time.time())
+        time_left = self._compute_eta(
+            self._total_epochs, self.train_time.time(), self._train_steps
+        )
         if time_left is not None:
             logs.append(f'time_left:{max(0,time_left):.0f}s')
 
         log = '{}\n{}\n'.format(' '.join(logs), nice_report(train_report))
         logging.info(log)
         self.log_time.reset()
+        self._last_log_steps = 0
 
         if opt['tensorboard_log'] and is_primary_worker():
             self.tb_logger.log_metrics('train', self.parleys, train_report)
+        if opt['wandb_log'] and is_primary_worker():
+            self.wb_logger.log_metrics('train', self.parleys, train_report)
 
-    def train(self):
+        return train_report
+
+    def train_steps(self):
         """
-        Perform a training run.
+        Core training loop.
 
-        :return: tuple of reports (validation_report, test_report)
+        Yields a metrics dict with each log.
         """
         logging.info('training...')
         opt = self.opt
@@ -663,25 +818,18 @@ class TrainLoop:
                     break
 
                 self.parleys += 1
+                self._train_steps = self.parleys // self.update_freq
+                self._last_log_steps += 1 / self.update_freq
 
+                # the following additionally updates self._total_epochs
+                train_time, log_time, validate_time = self._get_time(world)
                 # get the total training examples done, compute epochs
-                self._total_epochs = self._preempted_epochs + sum(
-                    all_gather_list(world.get_total_epochs())
-                )
                 exs_per_epoch = world.num_examples()
                 self._total_exs = int(np.round(self._total_epochs * exs_per_epoch))
-                # and use the primary worker's timings for everything
-                train_time, log_time, validate_time = sync_object(
-                    (
-                        self.train_time.time(),
-                        self.log_time.time(),
-                        self.validate_time.time(),
-                    )
-                )
 
                 # check counters and timers
                 if self._total_epochs >= self.max_num_epochs:
-                    self.log()
+                    yield self.log()
                     logging.info(
                         f'num_epochs completed:{self.max_num_epochs} time elapsed:{train_time}s'
                     )
@@ -689,16 +837,28 @@ class TrainLoop:
                 if train_time > self.max_train_time:
                     logging.info(f'max_train_time elapsed:{train_time}s')
                     break
-                if log_time > self.log_every_n_secs:
-                    self.log()
+                if self._train_steps >= self.max_train_steps:
+                    logging.info(
+                        f'max_train_steps elapsed:{self._train_steps} '
+                        f'time elapsed:{train_time}s'
+                    )
+                    break
+                if (
+                    log_time > self.log_every_n_secs
+                    or self._last_log_steps >= self.log_every_n_steps
+                ):
+                    yield self.log()
                 if (
                     validate_time > self.val_every_n_secs
                     or self._total_epochs - self.last_valid_epoch
                     >= self.val_every_n_epochs
+                    or self._train_steps - self._last_valid_steps
+                    >= self.val_every_n_steps
                 ):
                     try:
                         # log before we validate
-                        self.log()
+                        if self._last_log_steps:
+                            yield self.log()
                         world.reset_metrics()
                         stop_training = self.validate()
                     except StopTrainException:
@@ -706,6 +866,7 @@ class TrainLoop:
                     # reset the log time because we logged right before validating
                     self.log_time.reset()
                     self.last_valid_epoch = self._total_epochs
+                    self._last_valid_steps = self._train_steps
                     if stop_training:
                         break
                     # make sure metrics are clean before we log
@@ -752,6 +913,7 @@ class TrainLoop:
             # reload best validation model
             self.agent = create_agent(opt)
 
+<<<<<<< HEAD
         # # perform final validation/testing
         # valid_worlds = load_eval_worlds(self.agent, opt, 'valid')
         # max_exs = opt['validation_max_exs'] if opt.get('short_final_eval') else -1
@@ -768,6 +930,41 @@ class TrainLoop:
         # print_announcements(opt)
 
         # return v_report, t_report
+=======
+    def train(self):
+        """
+        Perform a training run.
+
+        :return: tuple of reports (validation_report, test_report)
+        """
+        opt = self.opt
+        for _train_log in self.train_steps():
+            # we've already done what we need in these
+            pass
+
+        # perform final validation/testing
+        valid_worlds = load_eval_worlds(self.agent, opt, 'valid')
+        max_exs = opt['validation_max_exs'] if opt.get('short_final_eval') else -1
+        v_report = self._run_eval(valid_worlds, opt, 'valid', max_exs, write_log=True)
+        test_worlds = load_eval_worlds(self.agent, opt, 'test')
+        t_report = self._run_eval(test_worlds, opt, 'test', max_exs, write_log=True)
+
+        if opt['wandb_log'] and is_primary_worker():
+            self.wb_logger.log_final('valid', v_report)
+            self.wb_logger.log_final('test', t_report)
+            self.wb_logger.finish()
+
+        if valid_worlds:
+            for valid_world in valid_worlds:
+                valid_world.shutdown()
+        if test_worlds:
+            for test_world in test_worlds:
+                test_world.shutdown()
+
+        print_announcements(opt)
+
+        return v_report, t_report
+>>>>>>> f302b121e0a37ec011e9bd468b317909ba2d74f5
 
 
 @register_script('train_model', aliases=['tm', 'train'])

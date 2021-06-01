@@ -10,6 +10,8 @@ Torch Ranker Agents provide functionality for building ranking models.
 See the TorchRankerAgent tutorial for examples.
 """
 
+from typing import Optional
+from parlai.core.params import ParlaiParser
 from typing import Dict, Any
 from abc import abstractmethod
 from itertools import islice
@@ -49,12 +51,14 @@ class TorchRankerAgent(TorchAgent):
     """
 
     @classmethod
-    def add_cmdline_args(cls, argparser):
+    def add_cmdline_args(
+        cls, parser: ParlaiParser, partial_opt: Optional[Opt] = None
+    ) -> ParlaiParser:
         """
         Add CLI args.
         """
-        super(TorchRankerAgent, cls).add_cmdline_args(argparser)
-        agent = argparser.add_argument_group('TorchRankerAgent')
+        super().add_cmdline_args(parser, partial_opt=partial_opt)
+        agent = parser.add_argument_group('TorchRankerAgent')
         agent.add_argument(
             '-cands',
             '--candidates',
@@ -175,6 +179,7 @@ class TorchRankerAgent(TorchAgent):
             default=False,
             help='Return sorted candidate scores from eval_step',
         )
+        return parser
 
     def __init__(self, opt: Opt, shared=None):
         # Must call _get_init_model() first so that paths are updated if necessary
@@ -312,7 +317,7 @@ class TorchRankerAgent(TorchAgent):
         path = self.opt['model_file'] + '.cands-' + self.opt['task'] + '.cands'
         if PathManager.exists(path) and self.opt['fixed_candidate_vecs'] == 'reuse':
             return path
-        logging.warn(f'Building candidates file as they do not exist: {path}')
+        logging.warning(f'Building candidates file as they do not exist: {path}')
         from parlai.scripts.build_candidates import build_cands
         from copy import deepcopy
 
@@ -706,6 +711,7 @@ class TorchRankerAgent(TorchAgent):
                         cands_to_id[cand] = len(cands_to_id)
                         all_cands_vecs.append(batch.candidate_vecs[i][j])
             cand_vecs, _ = self._pad_tensor(all_cands_vecs)
+            cand_vecs = cand_vecs.to(batch.label_vec.device)
             label_inds = label_vecs.new_tensor(
                 [cands_to_id[label] for label in batch.labels]
             )
@@ -725,11 +731,12 @@ class TorchRankerAgent(TorchAgent):
 
             cands = batch.candidates
             cand_vecs = padded_3d(
-                batch.candidate_vecs,
-                self.NULL_IDX,
-                use_cuda=self.use_cuda,
-                fp16friendly=self.fp16,
+                batch.candidate_vecs, self.NULL_IDX, fp16friendly=self.fp16
             )
+            if self.use_cuda:
+                cand_vecs = cand_vecs.to(
+                    0 if self.opt['gpu'] == -1 else self.opt['gpu']
+                )
             if label_vecs is not None:
                 label_inds = label_vecs.new_empty((batchsize))
                 bad_batch = False

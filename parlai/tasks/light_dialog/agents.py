@@ -4,6 +4,9 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+from typing import Optional
+from parlai.core.params import ParlaiParser
+from parlai.core.opt import Opt
 from parlai.core.teachers import ParlAIDialogTeacher
 from .build import build
 
@@ -53,9 +56,12 @@ def _path(opt):
 
 
 class DefaultTeacher(ParlAIDialogTeacher):
-    @staticmethod
-    def add_cmdline_args(argparser):
-        agent = argparser.add_argument_group('LIGHT Dialogue options')
+    @classmethod
+    def add_cmdline_args(
+        cls, parser: ParlaiParser, partial_opt: Optional[Opt] = None
+    ) -> ParlaiParser:
+        super().add_cmdline_args(parser, partial_opt)
+        agent = parser.add_argument_group('LIGHT Dialogue options')
         agent.add_argument(
             '--light_use_repeat',
             type=str,
@@ -114,6 +120,7 @@ class DefaultTeacher(ParlAIDialogTeacher):
             default=1.0,
             help='Float in range [0, 1] indicating proportion of train set to use',
         )
+        return parser
 
     def __init__(self, opt, shared=None):
         opt = copy.deepcopy(opt)
@@ -138,8 +145,12 @@ class DefaultTeacher(ParlAIDialogTeacher):
 
 
 class SimpleTeacher(DefaultTeacher):
-    def add_cmdline_args(argparser):
-        agent = argparser.add_argument_group('LIGHT Dialogue options')
+    @classmethod
+    def add_cmdline_args(
+        cls, parser: ParlaiParser, partial_opt: Optional[Opt] = None
+    ) -> ParlaiParser:
+        super().add_cmdline_args(parser, partial_opt)
+        agent = parser.add_argument_group('LIGHT Dialogue options')
         agent.add_argument(
             '--light_use_repeat',
             type=str,
@@ -193,6 +204,7 @@ class SimpleTeacher(DefaultTeacher):
         agent.add_argument('--light_use_clip_cands', type=int, default=10000)
         agent.add_argument('--light_use_speech_prefix', type='bool', default=False)
         agent.add_argument('--light_percent_train_exs', type=float, default=1.0)
+        return parser
 
     def __init__(self, opt, shared=None):
         super().__init__(opt, shared)
@@ -200,8 +212,12 @@ class SimpleTeacher(DefaultTeacher):
 
 
 class SimpleMultiTeacher(DefaultTeacher):
-    def add_cmdline_args(argparser):
-        agent = argparser.add_argument_group('LIGHT Dialogue options')
+    @classmethod
+    def add_cmdline_args(
+        cls, parser: ParlaiParser, partial_opt: Optional[Opt] = None
+    ) -> ParlaiParser:
+        super().add_cmdline_args(parser, partial_opt)
+        agent = parser.add_argument_group('LIGHT Dialogue options')
         agent.add_argument(
             '--light_use_repeat',
             type=str,
@@ -255,6 +271,7 @@ class SimpleMultiTeacher(DefaultTeacher):
         agent.add_argument('--light_use_clip_cands', type=int, default=10000)
         agent.add_argument('--light_use_speech_prefix', type='bool', default=False)
         agent.add_argument('--light_percent_train_exs', type=float, default=1.0)
+        return parser
 
     def __init__(self, opt, shared=None):
         super().__init__(opt, shared)

@@ -7,6 +7,9 @@
 # This task simply loads the specified file: useful for quick tests without
 # setting up a new task.
 
+from typing import Optional
+from parlai.core.params import ParlaiParser
+from parlai.core.opt import Opt
 import copy
 import os
 
@@ -20,10 +23,14 @@ class FbformatTeacher(FbDeprecatedDialogTeacher):
     a new task.
     """
 
-    @staticmethod
-    def add_cmdline_args(argparser):
-        agent = argparser.add_argument_group('FromFile Task Arguments')
+    @classmethod
+    def add_cmdline_args(
+        cls, parser: ParlaiParser, partial_opt: Optional[Opt] = None
+    ) -> ParlaiParser:
+        super().add_cmdline_args(parser, partial_opt)
+        agent = parser.add_argument_group('FromFile Task Arguments')
         agent.add_argument('-dp', '--fromfile-datapath', type=str, help="Data file")
+        return parser
 
     def __init__(self, opt, shared=None):
         opt = copy.deepcopy(opt)
@@ -41,10 +48,14 @@ class Fbformat2Teacher(FbDeprecatedDialogTeacher):
     Used to set up a second task.
     """
 
-    @staticmethod
-    def add_cmdline_args(argparser):
-        agent = argparser.add_argument_group('FromFile Task Arguments')
+    @classmethod
+    def add_cmdline_args(
+        cls, parser: ParlaiParser, partial_opt: Optional[Opt] = None
+    ) -> ParlaiParser:
+        super().add_cmdline_args(parser, partial_opt)
+        agent = parser.add_argument_group('FromFile Task Arguments')
         agent.add_argument('-dp', '--fromfile-datapath2', type=str, help="Data file")
+        return parser
 
     def __init__(self, opt, shared=None):
         opt = copy.deepcopy(opt)
@@ -61,9 +72,12 @@ class ParlaiformatTeacher(ParlAIDialogTeacher):
     See core/teachers.py for more info about the format.
     """
 
-    @staticmethod
-    def add_cmdline_args(argparser):
-        agent = argparser.add_argument_group('FromFile Task Arguments')
+    @classmethod
+    def add_cmdline_args(
+        cls, parser: ParlaiParser, partial_opt: Optional[Opt] = None
+    ) -> ParlaiParser:
+        super().add_cmdline_args(parser, partial_opt)
+        agent = parser.add_argument_group('FromFile Task Arguments')
         agent.add_argument('-ffdp', '--fromfile-datapath', type=str, help="Data file")
         agent.add_argument(
             '-ffdt',
@@ -72,6 +86,7 @@ class ParlaiformatTeacher(ParlAIDialogTeacher):
             default=False,
             help="If true, use _train.txt, _valid.txt, _test.txt file extensions",
         )
+        return parser
 
     def __init__(self, opt, shared=None):
         super().__init__(opt, shared)
@@ -85,7 +100,7 @@ class ParlaiformatTeacher(ParlAIDialogTeacher):
             if shared is None and (
                 'valid' in self.opt['datatype'] or 'test' in self.opt['datatype']
             ):
-                logging.warn(
+                logging.warning(
                     'You are using this fromfile data as a valid or test set without setting fromfile_datatype_extension to true. Please be aware this uses directly the file you indicated, make sure this is not the same as your training file.'
                 )
         if shared is None:
@@ -97,10 +112,14 @@ class ParlaiformatTeacher(ParlAIDialogTeacher):
 
 
 class Parlaiformat2Teacher(ParlAIDialogTeacher):
-    @staticmethod
-    def add_cmdline_args(argparser):
-        agent = argparser.add_argument_group('FromFile Task Arguments')
+    @classmethod
+    def add_cmdline_args(
+        cls, parser: ParlaiParser, partial_opt: Optional[Opt] = None
+    ) -> ParlaiParser:
+        super().add_cmdline_args(parser, partial_opt)
+        agent = parser.add_argument_group('FromFile Task Arguments')
         agent.add_argument('--fromfile-datapath2', type=str, help="Data file")
+        return parser
 
     def __init__(self, opt, shared=None):
         super().__init__(opt, shared)

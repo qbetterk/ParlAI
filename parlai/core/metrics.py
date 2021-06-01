@@ -7,12 +7,25 @@
 Provides standard metric evaluations for dialog, as well as an aggregator.
 """
 
+from __future__ import annotations
+
 import re
 from abc import ABC, abstractmethod
 from collections import Counter
 import functools
 import datetime
-from typing import Union, List, Optional, Tuple, Set, Any, Dict
+import math
+from typing import (
+    Any,
+    Counter as TCounter,
+    Dict,
+    List,
+    NamedTuple,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+)
 
 import torch
 
@@ -23,33 +36,122 @@ from parlai.utils.typing import TScalar, TVector
 DEFAULT_METRICS = {'bleu-4', 'accuracy', 'f1'}
 ROUGE_METRICS = {'rouge-1', 'rouge-2', 'rouge-L'}
 BLEU_METRICS = {'bleu-1', 'bleu-2', 'bleu-3', 'bleu-4'}
-ALL_METRICS = DEFAULT_METRICS | ROUGE_METRICS | BLEU_METRICS
+DISTINCT_METRICS = {
+    'interdistinct-1',
+    'interdistinct-2',
+    'intradistinct-1',
+    'intradistinct-2',
+}
+ALL_METRICS = DEFAULT_METRICS | ROUGE_METRICS | BLEU_METRICS | DISTINCT_METRICS
 
 
-try:
-    from nltk.translate import bleu_score as nltkbleu
-except ImportError:
-    # User doesn't have nltk installed, so we can't use it for bleu
-    # We'll just turn off things, but we might want to warn the user
-    nltkbleu = None
+class MetricDisplayData(NamedTuple):
+    title: str
+    description: str
 
-try:
-    from fairseq import bleu as fairseqbleu
-except ImportError:
-    fairseqbleu = None
 
-try:
-    import rouge
-except ImportError:
-    # User doesn't have py-rouge installed, so we can't use it.
-    # We'll just turn off rouge computations
-    rouge = None
+METRICS_DISPLAY_DATA = {
+    "accuracy": MetricDisplayData("Accuracy", "Exact match text accuracy"),
+    "bleu-4": MetricDisplayData(
+        "BLEU-4",
+        "BLEU-4 of the generation, under a standardized (model-independent) tokenizer",
+    ),
+    "clen": MetricDisplayData(
+        "Context Length", "Average length of context in number of tokens"
+    ),
+    "clip": MetricDisplayData(
+        "Clipped Gradients", "Fraction of batches with clipped gradients"
+    ),
+    "ctpb": MetricDisplayData("Context Tokens Per Batch", "Context tokens per batch"),
+    "ctps": MetricDisplayData("Context Tokens Per Second", "Context tokens per second"),
+    "ctrunc": MetricDisplayData(
+        "Context Truncation", "Fraction of samples with some context truncation"
+    ),
+    "ctrunclen": MetricDisplayData(
+        "Context Truncation Length", "Average length of context tokens truncated"
+    ),
+    "exps": MetricDisplayData("Examples Per Second", "Examples per second"),
+    "exs": MetricDisplayData(
+        "Examples", "Number of examples processed since last print"
+    ),
+    "f1": MetricDisplayData(
+        "F1", "Unigram F1 overlap, under a standardized (model-independent) tokenizer"
+    ),
+    "gnorm": MetricDisplayData("Gradient Norm", "Gradient norm"),
+    "gpu_mem": MetricDisplayData(
+        "GPU Memory",
+        "Fraction of GPU memory used. May slightly underestimate true value.",
+    ),
+    "hits@1": MetricDisplayData(
+        "Hits@1", "Fraction of correct choices in 1 guess. (Similar to recall@K)"
+    ),
+    "hits@5": MetricDisplayData(
+        "Hits@5", "Fraction of correct choices in 5 guesses. (Similar to recall@K)"
+    ),
+    "interdistinct-1": MetricDisplayData(
+        "Interdistinct-1", "Fraction of n-grams unique across _all_ generations"
+    ),
+    "interdistinct-2": MetricDisplayData(
+        "Interdistinct-1", "Fraction of n-grams unique across _all_ generations"
+    ),
+    "intradistinct-1": MetricDisplayData(
+        "Intradictinct-1", "Fraction of n-grams unique _within_ each utterance"
+    ),
+    "intradictinct-2": MetricDisplayData(
+        "Intradictinct-2", "Fraction of n-grams unique _within_ each utterance"
+    ),
+    "jga": MetricDisplayData("Joint Goal Accuracy", "Joint Goal Accuracy"),
+    "llen": MetricDisplayData(
+        "Label Length", "Average length of label in number of tokens"
+    ),
+    "loss": MetricDisplayData("Loss", "Loss"),
+    "lr": MetricDisplayData("Learning Rate", "The most recent learning rate applied"),
+    "ltpb": MetricDisplayData("Label Tokens Per Batch", "Label tokens per batch"),
+    "ltps": MetricDisplayData("Label Tokens Per Second", "Label tokens per second"),
+    "ltrunc": MetricDisplayData(
+        "Label Truncation", "Fraction of samples with some label truncation"
+    ),
+    "ltrunclen": MetricDisplayData(
+        "Label Truncation Length", "Average length of label tokens truncated"
+    ),
+    "rouge-1": MetricDisplayData("ROUGE-1", "ROUGE metrics"),
+    "rouge-2": MetricDisplayData("ROUGE-2", "ROUGE metrics"),
+    "rouge-L": MetricDisplayData("ROUGE-L", "ROUGE metrics"),
+    "token_acc": MetricDisplayData(
+        "Token Accuracy", "Token-wise accuracy (generative only)"
+    ),
+    "token_em": MetricDisplayData(
+        "Token Exact Match",
+        "Utterance-level token accuracy. Roughly corresponds to perfection under greedy search (generative only)",
+    ),
+    "total_train_updates": MetricDisplayData(
+        "Total Train Updates", "Number of SGD steps taken across all batches"
+    ),
+    "tpb": MetricDisplayData(
+        "Tokens Per Batch", "Total tokens (context + label) per batch"
+    ),
+    "tps": MetricDisplayData(
+        "Tokens Per Second", "Total tokens (context + label) per second"
+    ),
+    "ups": MetricDisplayData("Updates Per Second", "Updates per second (approximate)"),
+}
+
+
+def get_metric_display_data(metric: str) -> MetricDisplayData:
+    return METRICS_DISPLAY_DATA.get(
+        metric,
+        MetricDisplayData(
+            title=metric,
+            description="No description provided. Please add it to metrics.py if this is an official metric in ParlAI.",
+        ),
+    )
+
 
 re_art = re.compile(r'\b(a|an|the)\b')
 re_punc = re.compile(r'[!"#$%&()*+,-./:;<=>?@\[\]\\^`{|}~_\']')
 
 
-@functools.total_ordering
+@functools.total_ordering  # type: ignore
 class Metric(ABC):
     """
     Base class for storing metrics.
@@ -79,7 +181,7 @@ class Metric(ABC):
         pass
 
     @abstractmethod
-    def __add__(self, other: Any) -> 'Metric':
+    def __add__(self, other: Any) -> Metric:
         raise NotImplementedError
 
     def __iadd__(self, other):
@@ -150,13 +252,20 @@ class Metric(ABC):
         return int(cls.as_number(obj))
 
     @classmethod
-    def many(cls, *objs: List[TVector]) -> List['Metric']:
+    def many(cls, *objs: List[TVector]) -> List[Metric]:
         """
         Construct many of a Metric from the base parts.
 
         Useful if you separately compute numerators and denomenators, etc.
         """
         lengths = [len(o) for o in objs]
+        objs = list(objs)  # convert from tuple for inplace modification
+        for i, o in enumerate(objs):
+            if isinstance(o, torch.Tensor):
+                # if the tensor is on GPU, make sure we transfer the whole thing
+                # at once, instead of one-element-at-a-time during our list
+                # comprehension
+                objs[i] = o.tolist()
         if len(set(lengths)) != 1:
             raise IndexError(f'Uneven {cls.__name__} constructions: {lengths}')
         return [cls(*items) for items in zip(*objs)]
@@ -175,7 +284,7 @@ class FixedMetric(Metric):
     def __init__(self, value: TScalar):
         self._value = self.as_number(value)
 
-    def __add__(self, other: Optional['FixedMetric']) -> 'FixedMetric':
+    def __add__(self, other: Optional[FixedMetric]) -> FixedMetric:
         if other is None:
             return self
         if self != other:
@@ -203,7 +312,7 @@ class SumMetric(Metric):
             assert isinstance(sum_, (int, float))
             self._sum = sum_
 
-    def __add__(self, other: Optional['SumMetric']) -> 'SumMetric':
+    def __add__(self, other: Optional[SumMetric]) -> SumMetric:
         # NOTE: hinting can be cleaned up with "from __future__ import annotations" when
         # we drop Python 3.6
         if other is None:
@@ -237,7 +346,7 @@ class AverageMetric(Metric):
         self._numer = self.as_number(numer)
         self._denom = self.as_number(denom)
 
-    def __add__(self, other: Optional['AverageMetric']) -> 'AverageMetric':
+    def __add__(self, other: Optional[AverageMetric]) -> AverageMetric:
         # NOTE: hinting can be cleaned up with "from __future__ import annotations" when
         # we drop Python 3.6
         if other is None:
@@ -269,7 +378,7 @@ class MacroAverageMetric(Metric):
     def __init__(self, metrics: Dict[str, Metric]) -> None:
         self._values = metrics
 
-    def __add__(self, other: Optional['MacroAverageMetric']) -> 'MacroAverageMetric':
+    def __add__(self, other: Optional[MacroAverageMetric]) -> MacroAverageMetric:
         if other is None:
             return self
         output = dict(**self._values)
@@ -291,14 +400,14 @@ class TimerMetric(Metric):
     __slots__ = ('_value', '_start', '_end')
 
     @classmethod
-    def _now(cls) -> int:
+    def _now(cls) -> float:
         return datetime.datetime.utcnow().timestamp()
 
     def __init__(
         self,
         value: TScalar,
-        start_time: Optional[int] = None,
-        end_time: Optional[int] = None,
+        start_time: Optional[float] = None,
+        end_time: Optional[float] = None,
     ):
         self._value = self.as_number(value)
         if start_time is None:
@@ -308,14 +417,14 @@ class TimerMetric(Metric):
         self._start = start_time
         self._end = end_time
 
-    def __add__(self, other: Optional['TimerMetric']) -> 'TimerMetric':
+    def __add__(self, other: Optional[TimerMetric]) -> TimerMetric:
         # NOTE: hinting can be cleaned up with "from __future__ import annotations" when
         # we drop Python 3.6
         if other is None:
             return self
         total: TScalar = self._value + other._value
-        start: int = min(self._start, other._start)
-        end: int = max(self._start, other._end)
+        start: float = min(self._start, other._start)
+        end: float = max(self._start, other._end)
         return type(self)(total, start, end)
 
     def value(self) -> float:
@@ -410,7 +519,7 @@ class F1Metric(AverageMetric):
         return precision, recall, f1
 
     @staticmethod
-    def compute(guess: str, answers: List[str]) -> 'F1Metric':
+    def compute(guess: str, answers: List[str]) -> F1Metric:
         if guess is None or answers is None:
             return AverageMetric(0, 0)
         g_tokens = normalize_answer(guess).split()
@@ -423,7 +532,7 @@ class F1Metric(AverageMetric):
 
 class ExactMatchMetric(AverageMetric):
     @staticmethod
-    def compute(guess: str, answers: List[str]) -> 'ExactMatchMetric':
+    def compute(guess: str, answers: List[str]) -> ExactMatchMetric:
         if guess is None or answers is None:
             return None
         guess = normalize_answer(guess)
@@ -435,13 +544,17 @@ class ExactMatchMetric(AverageMetric):
 
 class BleuMetric(AverageMetric):
     @staticmethod
-    def compute(guess: str, answers: List[str], k: int = 4) -> Optional['BleuMetric']:
+    def compute(guess: str, answers: List[str], k: int = 4) -> Optional[BleuMetric]:
         """
         Compute approximate BLEU score between guess and a set of answers.
         """
-        if nltkbleu is None:
-            # bleu library not installed, just return a default value
+        try:
+            from nltk.translate import bleu_score as nltkbleu
+        except ImportError:
+            # User doesn't have nltk installed, so we can't use it for bleu
+            # We'll just turn off things, but we might want to warn the user
             return None
+
         # Warning: BLEU calculation *should* include proper tokenization and
         # punctuation etc. We're using the normalize_answer for everything though,
         # so we're over-estimating our BLEU scores.  Also note that NLTK's bleu is
@@ -458,7 +571,106 @@ class BleuMetric(AverageMetric):
         return BleuMetric(score)
 
 
-class FairseqBleuMetric(AverageMetric):
+class FairseqBleuMetric(Metric):
+    """
+    Re-implementation of
+    https://github.com/pytorch/fairseq/blob/master/fairseq/scoring/bleu.py.
+    """
+
+    def __init__(
+        self,
+        pred: Union[torch.Tensor, List[int]],
+        ref: Union[torch.Tensor, List[int]],
+        pad_idx: int,
+        eos_idx: int,
+        unk_idx: int,
+        order: int,
+    ):
+        try:
+            from fairseq import libbleu
+            from fairseq.scoring.bleu import BleuStat
+            import ctypes
+        except ImportError:
+            return
+
+        self.stat = BleuStat()
+        self.order = order
+
+        C = ctypes.cdll.LoadLibrary(libbleu.__file__)
+        C.bleu_zero_init(ctypes.byref(self.stat))
+
+        if not torch.is_tensor(pred):
+            pred = torch.LongTensor(pred)
+        if not torch.is_tensor(ref):
+            ref = torch.LongTensor(ref)
+
+        rref = ref.clone()
+        assert not rref.lt(0).any()
+        rref[rref.eq(unk_idx)] = -999
+
+        rref = rref.contiguous().view(-1)
+        pred = pred.contiguous().view(-1)
+
+        C.bleu_add(
+            ctypes.byref(self.stat),
+            ctypes.c_size_t(rref.size(0)),
+            ctypes.c_void_p(rref.data_ptr()),
+            ctypes.c_size_t(pred.size(0)),
+            ctypes.c_void_p(pred.data_ptr()),
+            ctypes.c_int(pad_idx),
+            ctypes.c_int(eos_idx),
+        )
+
+    @property
+    def macro_average(self) -> bool:
+        """
+        Indicates whether this metric should be macro-averaged when globally reported.
+        """
+        return True
+
+    def __add__(self, other: Optional[FairseqBleuMetric]) -> FairseqBleuMetric:
+        if other is None:
+            return self
+        self.stat.match1 += other.stat.match1
+        self.stat.match2 += other.stat.match2
+        self.stat.match3 += other.stat.match3
+        self.stat.match4 += other.stat.match4
+        self.stat.count1 += other.stat.count1
+        self.stat.count2 += other.stat.count2
+        self.stat.count3 += other.stat.count3
+        self.stat.count4 += other.stat.count4
+        self.stat.predlen += other.stat.predlen
+        self.stat.reflen += other.stat.reflen
+        return self
+
+    def _ratio(self, a: int, b: int) -> float:
+        """
+        Safe division.
+        """
+        return a / b if b > 0 else 0
+
+    def _precision(self):
+        return [
+            self._ratio(self.stat.match1, self.stat.count1),
+            self._ratio(self.stat.match2, self.stat.count2),
+            self._ratio(self.stat.match3, self.stat.count3),
+            self._ratio(self.stat.match4, self.stat.count4),
+        ]
+
+    def _brevity(self):
+        r = self.stat.reflen / self.stat.predlen
+        return min(1, math.exp(1 - r))
+
+    def value(self) -> float:
+        """
+        Reimplementation of Fairseq's score.
+        """
+        psum = sum(
+            math.log(p) if p > 0 else float("-Inf")
+            for p in self._precision()[: self.order]
+        )
+        return self._brevity() * math.exp(psum / self.order) * 100
+
     @staticmethod
     def compute_many(
         guess: torch.Tensor, answers: torch.Tensor, pad_idx, end_idx, unk_idx
@@ -466,13 +678,22 @@ class FairseqBleuMetric(AverageMetric):
         """
         Return BLEU-1..4 using fairseq and tokens.
         """
-        if fairseqbleu is None:
+        try:
+            from fairseq.scoring import bleu as fairseqbleu  # noqa
+        except ImportError:
             return None
-        scorer = fairseqbleu.Scorer(pad_idx, end_idx, unk_idx)
-        answers = answers.cpu().int()
-        guess = guess.cpu().int()
-        scorer.add(answers, guess)
-        return [FairseqBleuMetric(scorer.score(i) / 100.0) for i in range(1, 5)]
+
+        return [
+            FairseqBleuMetric(
+                guess.cpu().int(),
+                answers.cpu().int(),
+                pad_idx,
+                end_idx,
+                unk_idx,
+                order=i,
+            )
+            for i in range(1, 5)
+        ]
 
 
 class RougeMetric(AverageMetric):
@@ -481,9 +702,7 @@ class RougeMetric(AverageMetric):
     @staticmethod
     def compute_many(
         guess: str, answers: List[str]
-    ) -> Tuple[
-        Optional['RougeMetric'], Optional['RougeMetric'], Optional['RougeMetric']
-    ]:
+    ) -> Tuple[Optional[RougeMetric], Optional[RougeMetric], Optional[RougeMetric]]:
         """
         Compute ROUGE score between guess and *any* answer.
 
@@ -492,9 +711,13 @@ class RougeMetric(AverageMetric):
         :return: (rouge-1, rouge-2, rouge-L)
         """
         # possible global initialization
-        global rouge
-        if rouge is None:
+        try:
+            import rouge
+        except ImportError:
+            # User doesn't have py-rouge installed, so we can't use it.
+            # We'll just turn off rouge computations
             return None, None, None
+
         if RougeMetric._evaluator is None:
             RougeMetric._evaluator = rouge.Rouge(
                 metrics=['rouge-n', 'rouge-l'], max_n=2
@@ -521,6 +744,60 @@ class RougeMetric(AverageMetric):
             RougeMetric(scores_rouge2),
             RougeMetric(scores_rougeL),
         )
+
+
+class IntraDistinctMetric(AverageMetric):
+    """
+    Compute intra-distinct (per-utterance).
+    """
+
+    @classmethod
+    def _ngram(cls, seq, n: int):
+        for i in range(len(seq) - n + 1):
+            yield tuple(seq[i : i + n])
+
+    @classmethod
+    def compute(cls, text: str, ngram: int = 1):
+        """
+        :param text:
+            The text to compute metric over
+        :param ngram:
+            n-gram length
+        """
+        tokens = normalize_answer(text).split()
+        counts: Counter[Any] = Counter(cls._ngram(tokens, ngram))
+        # computed per-example, macro averaged across examples
+        intra = max(len(counts), 1e-12) / max(sum(counts.values()), 1e-5)
+        return IntraDistinctMetric(intra, 1.0)
+
+
+class InterDistinctMetric(Metric):
+    """
+    Compute inter-distinct metric over corpus-level.
+    """
+
+    def __init__(self, counts: TCounter[Tuple]):
+        """
+        :param counts:
+            collections.Counter of ngram -> frequency
+        """
+        self._counts = counts
+
+    def __add__(self, other):
+        return InterDistinctMetric(self._counts + other._counts)
+
+    def value(self):
+        return max(len(self._counts), 1e-12) / max(sum(self._counts.values()), 1e-5)
+
+    @classmethod
+    def _ngram(cls, seq, n):
+        for i in range(len(seq) - n + 1):
+            yield tuple(seq[i : i + n])
+
+    @classmethod
+    def compute(cls, text, ngram=1):
+        tokens = normalize_answer(text).split()
+        return InterDistinctMetric(Counter(cls._ngram(tokens, ngram)))
 
 
 def normalize_answer(s):
@@ -604,16 +881,14 @@ class Metrics(object):
     def __init__(self, threadsafe=False, shared=None):
         if shared and 'data' in shared:
             # This is a clone
-            self._buffer = None
-            self._queue = None
-            self._worker = False
             self._data = shared['data']
         else:
             # The original
-            self._buffer = None
-            self._queue = None
-            self._worker = False
             self._data = {}
+
+        # recent data is to track per-example metrics, and so should never be
+        # shared
+        self._recent_data = {}
 
     def __str__(self):
         return str(self._data)
@@ -626,18 +901,32 @@ class Metrics(object):
         Record an accumulation to a metric.
         """
         self._data[key] = self._data.get(key) + value
+        self._recent_data[key] = self._recent_data.get(key) + value
 
     def report(self):
         """
         Report the metrics over all data seen so far.
         """
-        return {k: v for k, v in self._data.items()}
+        return self._data.copy()
+
+    def clear_recent(self):
+        """
+        Clear recent metrics (latest example).
+        """
+        self._recent_data.clear()
+
+    def report_recent(self):
+        """
+        Report recent metrics (latest example).
+        """
+        return self._recent_data.copy()
 
     def clear(self):
         """
         Clear all the metrics.
         """
         self._data.clear()
+        self._recent_data.clear()
 
     def share(self):
         return {'data': self._data}
@@ -679,6 +968,8 @@ class TeacherMetrics(Metrics):
                 col |= ROUGE_METRICS
             elif n == 'bleu':
                 col |= BLEU_METRICS
+            elif n == 'distinct':
+                col |= DISTINCT_METRICS
             elif n == 'all':
                 col |= ALL_METRICS
             else:
@@ -732,17 +1023,30 @@ class TeacherMetrics(Metrics):
                     self.add('rouge_2', r2)
                 if 'rouge-L' in self._metrics_list and rL:
                     self.add('rouge_L', rL)
+            # compute distinct-k
+            for k in [1, 2]:
+                if f'interdistinct-{k}' in self._metrics_list:
+                    self.add(
+                        f'interdistinct-{k}', InterDistinctMetric.compute(prediction, k)
+                    )
+                if f'intradistinct-{k}' in self._metrics_list:
+                    self.add(
+                        f'intradistinct-{k}', IntraDistinctMetric.compute(prediction, k)
+                    )
 
         # Ranking metrics.
         self._update_ranking_metrics(observation, labels)
 
+        self._consume_user_metrics(observation)
+
+    def _consume_user_metrics(self, observation):
         # User-reported metrics
         if 'metrics' in observation:
             for uk, v in observation['metrics'].items():
                 if uk in ALL_METRICS:
                     # don't let the user override our metrics
                     uk = f'USER_{uk}'
-                assert isinstance(uk, str), type(k)
+                assert isinstance(uk, str), f'{type(uk)} is not a str'
                 if not isinstance(v, Metric):
                     warn_once(f'Metric {uk} is assumed to be averaged per example.')
                     v = AverageMetric(v)

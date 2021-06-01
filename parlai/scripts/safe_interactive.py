@@ -29,10 +29,10 @@ def setup_args(parser=None):
         'examples with text candidates',
     )
     parser.add_argument(
-        '--display-ignore-fields',
+        '--display-add-fields',
         type=str,
-        default='label_candidates,text_candidates',
-        help='Do not display these fields',
+        default='',
+        help='Display these fields when verbose is off (e.g., "--display-add-fields label_candidates,beam_texts")',
     )
     parser.add_argument(
         '-it',
@@ -42,7 +42,7 @@ def setup_args(parser=None):
         help='Create interactive version of task',
     )
     parser.set_defaults(interactive_mode=True, task='interactive')
-    SafeLocalHumanAgent.add_cmdline_args(parser)
+    SafeLocalHumanAgent.add_cmdline_args(parser, partial_opt=None)
     return parser
 
 

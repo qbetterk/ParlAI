@@ -7,6 +7,9 @@
 Model Code.
 """
 
+from typing import Optional
+from parlai.core.params import ParlaiParser
+from parlai.core.opt import Opt
 import torch
 from torch import nn
 from torch import optim
@@ -20,13 +23,15 @@ class TransresnetModel(nn.Module):
     Actual model code for the Transresnet Agent.
     """
 
-    @staticmethod
-    def add_cmdline_args(argparser):
+    @classmethod
+    def add_cmdline_args(
+        cls, parser: ParlaiParser, partial_opt: Optional[Opt] = None
+    ) -> ParlaiParser:
         """
         Add command line arguments.
         """
-        Transformer.add_common_cmdline_args(argparser)
-        agent = argparser.add_argument_group('TransresnetModel arguments')
+        Transformer.add_common_cmdline_args(parser)
+        agent = parser.add_argument_group('TransresnetModel arguments')
         agent.add_argument(
             '--truncate',
             type=int,
@@ -94,9 +99,10 @@ class TransresnetModel(nn.Module):
             default=0.2,
             help='dropout for additional linear layer',
         )
-        argparser.set_params(
+        parser.set_params(
             ffn_size=1200, attention_dropout=0.2, relu_dropout=0.2, n_positions=1000
         )
+        return parser
 
     def __init__(self, opt, personalities_list, dictionary):
         super().__init__()
@@ -157,22 +163,12 @@ class TransresnetModel(nn.Module):
             )
 
         self.text_encoder = TransformerEncoder(
-            n_heads=self.opt['n_heads'],
-            n_layers=self.opt['n_layers'],
-            embedding_size=self.opt['embedding_size'],
-            ffn_size=self.opt['ffn_size'],
-            vocabulary_size=len(self.dictionary),
+            opt=self.opt,
             embedding=self.embeddings,
-            dropout=self.opt['dropout'],
-            attention_dropout=self.opt['attention_dropout'],
-            relu_dropout=self.opt['relu_dropout'],
+            vocabulary_size=len(self.dictionary),
             padding_idx=self.dictionary.tok2ind[self.dictionary.null_token],
-            learn_positional_embeddings=self.opt['learn_positional_embeddings'],
             embeddings_scale=False,
-            n_positions=self.opt['n_positions'],
-            activation=self.opt['activation'],
-            variant=self.opt['variant'],
-            n_segments=self.opt['n_segments'],
+            output_scaling=1.0,
         )
         if self.opt.get('load_encoder_from') is not None:
             self._load_text_encoder_state()

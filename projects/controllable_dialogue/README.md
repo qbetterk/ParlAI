@@ -1,5 +1,16 @@
 # Controllable Dialogue
 
+**This project has been archived and is no longer being maintained.**
+
+It was archived in March 2021. You can still find the code by checking out the
+`controllable_dialogue_archive` tag in your git repo. You may also browse the code
+[on GitHub](https://github.com/facebookresearch/ParlAI/tree/controllable_dialogue_archive/projects/controllable_dialogue).
+It is known to have been in a working state at that point.
+
+--------------------------------------------------------------------------------
+
+# Original README
+
 ## Paper information
 
 Abigail See, Stephen Roller, Douwe Kiela, Jason Weston. 
@@ -367,7 +378,7 @@ which models are being evaluated, and then you can launch the experiment with:
 ```
 python parlai/mturk/tasks/controllable_dialogue/run.py -r 0.9 --count-complete --hobby --max-resp-time 1200 --max-connections 20 -nc 1200 --sandbox
 ```
-Change it to `--live` if you're prepared to spend actual currency. The output must be
+(See [this README](https://github.com/facebookresearch/ParlAI/tree/master/parlai/mturk/README.md) for how to access this now deprecated script.) Change `--sandbox` to `--live` if you're prepared to spend actual currency. The output must be
 lightly postprocessed to use it with the analysis tools released. If you intend to do
 this, please file an issue on the
 [ParlAI GitHub](https://github.com/facebookresearch/ParlAI/).

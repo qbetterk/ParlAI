@@ -8,12 +8,14 @@
 Poly-encoder agent that ingests image features.
 """
 
+from typing import Optional
+from parlai.core.params import ParlaiParser
+from parlai.core.opt import Opt
 from typing import Any, Dict
 
 import torch
 
 from parlai.agents.image_seq2seq.modules import ContextWithImageEncoder
-from parlai.agents.transformer.modules import get_n_positions_from_options
 from parlai.agents.transformer.polyencoder import PolyencoderAgent, PolyEncoderModule
 from parlai.core.torch_agent import Batch
 from parlai.core.torch_image_agent import TorchImageAgent
@@ -29,13 +31,15 @@ class ImagePolyencoderAgent(PolyencoderAgent, TorchImageAgent):
     """
 
     @classmethod
-    def add_cmdline_args(cls, argparser):
+    def add_cmdline_args(
+        cls, parser: ParlaiParser, partial_opt: Optional[Opt] = None
+    ) -> ParlaiParser:
         """
         Add command-line arguments specifically for this agent.
         """
-        PolyencoderAgent.add_cmdline_args(argparser)
-        TorchImageAgent.add_cmdline_args(argparser)
-        agent = argparser.add_argument_group('ImagePolyencoder Args')
+        PolyencoderAgent.add_cmdline_args(parser, partial_opt=partial_opt)
+        TorchImageAgent.add_cmdline_args(parser, partial_opt=partial_opt)
+        agent = parser.add_argument_group('ImagePolyencoder Args')
         agent.add_argument(
             '--image-combination-mode',
             type=str,
@@ -157,28 +161,14 @@ class ImagePolyencoderModule(PolyEncoderModule):
         if for_context:
             if reduction_type is not None:
                 raise NotImplementedError('No encoder output reductions supported!')
-            n_positions = get_n_positions_from_options(opt)
             embeddings = self._get_embeddings(
                 dict_=dict_, null_idx=null_idx, embedding_size=opt['embedding_size']
             )
             return ContextWithImageEncoder(
-                n_heads=opt['n_heads'],
-                n_layers=opt['n_layers'],
-                embedding_size=opt['embedding_size'],
-                ffn_size=opt['ffn_size'],
+                opt=opt,
                 vocabulary_size=len(dict_),
                 embedding=embeddings,
-                dropout=opt['dropout'],
-                attention_dropout=opt['attention_dropout'],
-                relu_dropout=opt['relu_dropout'],
                 padding_idx=null_idx,
-                learn_positional_embeddings=opt['learn_positional_embeddings'],
-                embeddings_scale=opt['embeddings_scale'],
-                n_positions=n_positions,
-                n_segments=opt['n_segments'],
-                activation=opt['activation'],
-                variant=opt['variant'],
-                output_scaling=opt['output_scaling'],
                 image_encoder_num_layers=opt['image_encoder_num_layers'],
                 image_features_dim=opt['image_features_dim'],
                 image_combination_mode=opt['image_combination_mode'],

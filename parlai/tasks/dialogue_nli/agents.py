@@ -7,9 +7,13 @@
 Dialogue safety related datasets and teachers.
 """
 
+from typing import Optional
+from parlai.core.params import ParlaiParser
+from parlai.core.opt import Opt
 import json
 import os
 
+from parlai.core.message import Message
 from parlai.core.teachers import FixedDialogTeacher
 from .build import build
 from parlai.tasks.multinli.agents import convert_to_dialogData
@@ -35,8 +39,11 @@ DNLI_HYPO_KEY = 'sentence2'
 
 
 class DialogueNliTeacher(FixedDialogTeacher):
-    @staticmethod
-    def add_cmdline_args(parser):
+    @classmethod
+    def add_cmdline_args(
+        cls, parser: ParlaiParser, partial_opt: Optional[Opt] = None
+    ) -> ParlaiParser:
+        super().add_cmdline_args(parser, partial_opt)
         parser = parser.add_argument_group('DNLI Teacher Args')
         parser.add_argument(
             '-dfm',
@@ -54,6 +61,7 @@ class DialogueNliTeacher(FixedDialogTeacher):
             help="True if label candidates are (contradiction, not_contradiction), and (entailment, contradiction, "
             "neutral) otherwise (default: False).",
         )
+        return parser
 
     def __init__(self, opt, shared=None, extras=False):
         super().__init__(opt, shared)
@@ -127,7 +135,7 @@ class DialogueNliTeacher(FixedDialogTeacher):
             binary_classes=self.binary_classes,
         )
         new_entry = {k: entry[k] for k in ENTRY_FIELDS if k in entry}
-        return new_entry
+        return Message(new_entry)
 
 
 class ExtrasTeacher(DialogueNliTeacher):

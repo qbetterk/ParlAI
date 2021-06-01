@@ -23,6 +23,8 @@ We show that large scale models can learn these skills when given appropriate tr
 
 You may talk with our models. The 2.7B can be interacted with on a 16gb P100 GPU or better. The 9.4B parameter model requires at least two 32gb V100 GPUs to interact with.
 
+We also provide two smaller variants of the 2.7B-parameter model that were created using [knowledge distillation](https://github.com/facebookresearch/ParlAI/blob/master/projects/anti_scaling/README.md#knowledge-distillation). The 1.4B-parameter model is roughly 2x faster than the 2.7B-parameter model during inference and performs very nearly as well as it, and the 360M-parameter one is roughly 5x faster and has performance in between that of the 2.7B-parameter and 90M-parameter models.
+
 **Safety** We have studied improved safety from toxic language ([Dinan et al., 2019b](http://parl.ai/projects/dialogue_safety/)), but much work remains to be done. While we have made our models publicly available, and added a safety layer to the interaction, we have not mitigated all safety issues. We believe their release can help the community work together to understand further and fix these issues, and we recommend their use for that line of research.
 
 **90M**
@@ -40,13 +42,23 @@ python parlai/scripts/safe_interactive.py -t blended_skill_talk -mf zoo:blender/
 python parlai/scripts/safe_interactive.py -t blended_skill_talk -mf zoo:blender/blender_9B/model
 ```
 
+**2.7B distilled to 1.4B**
+```
+python parlai/scripts/safe_interactive.py -t blended_skill_talk -mf zoo:blender/blender_1Bdistill/model
+```
+
+**2.7B distilled to 360M**
+```
+python parlai/scripts/safe_interactive.py -t blended_skill_talk -mf zoo:blender/blender_400Mdistill/model
+```
+
 ## Fine-tuning your own models
 
 Commands for fine tuning the models on the [Blended Skill Talk](http://parl.ai/projects/bst) tasks are below. The 2.7B model requires a 32GB V100 in order to fine tune (limited to Adafactor), but may be fine tuned with ADAM with 2 or more V100s.
 
 **90M**. You may fine-tune your own 90M parameter model with:
 ```
-parlai train_model -t blended_skill_talk,wizard_of_wikipedia,convai2:normalized -m transformer/generator --multitask-weights 1,3,3,3 --init-model zoo:tutorial_transformer_generator/model --dict-file zoo:tutorial_transformer_generator/model.dict --embedding-size 512 --n-layers 8 --ffn-size 2048 --dropout 0.1 --n-heads 16 --learn-positional-embeddings True --n-positions 512 --variant xlm --activation gelu --skip-generation True --fp16 True --text-truncate 512 --label-truncate 128 --dict-tokenizer bpe --dict-lower True -lr 1e-06 --optimizer adamax --lr-scheduler reduceonplateau --gradient-clip 0.1 -veps 0.25 --betas 0.9,0.999 --update-freq 1 --attention-dropout 0.0 --relu-dropout 0.0 --skip-generation True -vp 15 -stim 60 -vme 20000 -bs 16 -vmt ppl -vmm min --save-after-valid True --model-file /tmp/test_train_90M
+parlai train_model -t blended_skill_talk,wizard_of_wikipedia,convai2:normalized -m transformer/generator --multitask-weights 1,3,3,3 --init-model zoo:tutorial_transformer_generator/model --dict-file zoo:tutorial_transformer_generator/model.dict --embedding-size 512 --n-layers 8 --ffn-size 2048 --dropout 0.1 --n-heads 16 --learn-positional-embeddings True --n-positions 512 --variant xlm --activation gelu --fp16 True --text-truncate 512 --label-truncate 128 --dict-tokenizer bpe --dict-lower True -lr 1e-06 --optimizer adamax --lr-scheduler reduceonplateau --gradient-clip 0.1 -veps 0.25 --betas 0.9,0.999 --update-freq 1 --attention-dropout 0.0 --relu-dropout 0.0 --skip-generation True -vp 15 -stim 60 -vme 20000 -bs 16 -vmt ppl -vmm min --save-after-valid True --model-file /tmp/test_train_90M
 ```
 
 **2.7B**. You may fine-tune your own 2.7B parameter model with:
@@ -69,7 +81,7 @@ python parlai/scripts/eval_model.py -t blended_skill_talk -mf zoo:blender/blende
 
 ## Running Human Evaluations (ACUTE-Eval)
 
-To run ACUTE-Eval human evaluations, see [here](https://github.com/facebookresearch/ParlAI/tree/master/parlai/mturk/tasks/acute_eval).
+To run ACUTE-Eval human evaluations, see [here](https://github.com/facebookresearch/ParlAI/tree/master/parlai/crowdsourcing/tasks/acute_eval).
 
 
 ## Crowdworker conversation logs

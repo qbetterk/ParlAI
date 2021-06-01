@@ -12,7 +12,7 @@ A module for testing various teacher types in ParlAI
 import os
 import unittest
 from parlai.utils import testing as testing_utils
-from parlai.core.teachers import DialogTeacher
+from parlai.core.teachers import DialogTeacher, create_task_agent_from_taskname
 from parlai.core.metrics import SumMetric
 import regex as re
 from parlai.core.message import Message
@@ -38,7 +38,7 @@ class TestAbstractImageTeacher(unittest.TestCase):
                 'task': 'integration_tests:ImageTeacher',
                 'datapath': data_path,
                 'image_mode': image_mode,
-                'display_verbose': True,
+                'verbose': True,
             }
             output = testing_utils.display_data(opt)
             train_labels = re.findall(r"\[labels\].*\n", output[0])
@@ -73,7 +73,7 @@ class TestParlAIDialogTeacher(unittest.TestCase):
             fp = os.path.join(tmpdir, "goodfile.txt")
             with PathManager.open(fp, "w") as f:
                 f.write('id:test_file\ttext:input\tlabels:good label\n\n')
-            opt = {'task': 'fromfile', 'fromfile_datapath': fp, 'display_verbose': True}
+            opt = {'task': 'fromfile', 'fromfile_datapath': fp, 'verbose': True}
             testing_utils.display_data(opt)
 
     def test_bad_fileformat(self):
@@ -84,7 +84,7 @@ class TestParlAIDialogTeacher(unittest.TestCase):
             fp = os.path.join(tmpdir, "badfile.txt")
             with PathManager.open(fp, "w") as f:
                 f.write('id:test_file\ttext:input\teval_labels:bad label\n\n')
-            opt = {'task': 'fromfile', 'fromfile_datapath': fp, 'display_verbose': True}
+            opt = {'task': 'fromfile', 'fromfile_datapath': fp, 'verbose': True}
             with self.assertRaises(ValueError):
                 testing_utils.display_data(opt)
 
@@ -93,7 +93,7 @@ class TestParlAIDialogTeacher(unittest.TestCase):
             fp = os.path.join(tmpdir, "badfile.txt")
             with PathManager.open(fp, "w") as f:
                 f.write('id:test_file\tlabels:bad label\n\n')
-            opt = {'task': 'fromfile', 'fromfile_datapath': fp, 'display_verbose': True}
+            opt = {'task': 'fromfile', 'fromfile_datapath': fp, 'verbose': True}
             with self.assertRaises(ValueError):
                 testing_utils.display_data(opt)
 
@@ -102,7 +102,7 @@ class TestParlAIDialogTeacher(unittest.TestCase):
             fp = os.path.join(tmpdir, "badfile.txt")
             with PathManager.open(fp, "w") as f:
                 f.write('id:test_file\ttext:bad text\n\n')
-            opt = {'task': 'fromfile', 'fromfile_datapath': fp, 'display_verbose': True}
+            opt = {'task': 'fromfile', 'fromfile_datapath': fp, 'verbose': True}
             with self.assertRaises(ValueError):
                 testing_utils.display_data(opt)
 
@@ -112,7 +112,7 @@ class TestParlAIDialogTeacher(unittest.TestCase):
             with PathManager.open(fp, "w") as f:
                 for _ in range(1000):
                     f.write('id:test_file\ttext:placeholder\tlabels:placeholder\n\n')
-            opt = {'task': 'fromfile', 'fromfile_datapath': fp, 'display_verbose': True}
+            opt = {'task': 'fromfile', 'fromfile_datapath': fp, 'verbose': True}
             with self.assertLogs(logger=logging.logger, level='DEBUG') as cm:
                 testing_utils.display_data(opt)
                 print("\n".join(cm.output))
@@ -126,11 +126,7 @@ class TestParlAIDialogTeacher(unittest.TestCase):
                         f.write(
                             'id:test_file\ttext:placeholder\tlabels:placeholder\tepisode_done:True\n\n'
                         )
-                opt = {
-                    'task': 'fromfile',
-                    'fromfile_datapath': fp,
-                    'display_verbose': True,
-                }
+                opt = {'task': 'fromfile', 'fromfile_datapath': fp, 'verbose': True}
                 with self.assertLogs(logger=logging.logger, level='DEBUG') as cm:
                     testing_utils.display_data(opt)
                     assert any('long episode' in l for l in cm.output)
@@ -147,7 +143,7 @@ class TestConversationTeacher(unittest.TestCase):
                 f.write(
                     '{"dialog": [[{"text": "Hi.", "id": "speaker1"}, {"text": "Hello.", "id": "speaker2"}]]}\n'
                 )
-            opt = {'task': 'jsonfile', 'jsonfile_datapath': fp, 'display_verbose': True}
+            opt = {'task': 'jsonfile', 'jsonfile_datapath': fp, 'verbose': True}
             testing_utils.display_data(opt)
 
     def test_no_text(self):
@@ -157,7 +153,7 @@ class TestConversationTeacher(unittest.TestCase):
                 f.write(
                     '{"dialog": [[{"id": "speaker1"}, {"text": "Hello.", "id": "speaker2"}]]}\n'
                 )
-            opt = {'task': 'jsonfile', 'jsonfile_datapath': fp, 'display_verbose': True}
+            opt = {'task': 'jsonfile', 'jsonfile_datapath': fp, 'verbose': True}
             with self.assertRaises(AttributeError):
                 testing_utils.display_data(opt)
 
@@ -171,7 +167,7 @@ class TestConversationTeacher(unittest.TestCase):
             opt = {
                 'task': 'jsonfile',
                 'jsonfile_datapath': fp,
-                'display_verbose': True,
+                'verbose': True,
                 'label_turns': 'firstspeaker',
             }
             train_out, valid_out, test_out = testing_utils.display_data(opt)
@@ -200,7 +196,7 @@ class TestConversationTeacher(unittest.TestCase):
             opt = {
                 'task': 'jsonfile',
                 'jsonfile_datapath': fp,
-                'display_verbose': True,
+                'verbose': True,
                 'label_turns': 'secondspeaker',
             }
             train_out, valid_out, test_out = testing_utils.display_data(opt)
@@ -229,7 +225,7 @@ class TestConversationTeacher(unittest.TestCase):
             opt = {
                 'task': 'jsonfile',
                 'jsonfile_datapath': fp,
-                'display_verbose': True,
+                'verbose': True,
                 'label_turns': 'both',
             }
             train_out, valid_out, test_out = testing_utils.display_data(opt)
@@ -257,6 +253,15 @@ class TestChunkTeacher(unittest.TestCase):
     """
     Test chunked teacher.
     """
+
+    def test_iter(self):
+        with testing_utils.tempdir() as tmpdir:
+            teacher = create_task_agent_from_taskname(
+                {'task': 'integration_tests', 'datatype': 'valid', 'datapath': tmpdir}
+            )[0]
+            # twice to assert we reset iterators correctly
+            assert len(list(teacher)) == 100
+            assert len(list(teacher)) == 100
 
     def test_no_batched(self):
         valid, test = testing_utils.eval_model(
@@ -296,27 +301,25 @@ class TestChunkTeacher(unittest.TestCase):
         assert valid['exs'] == 100
         assert test['exs'] == 100
 
-    def test_stream_only(self):
-        with self.assertRaises(ValueError):
-            valid, test = testing_utils.eval_model(
-                dict(
-                    task='integration_tests:chunky',
-                    model='parlai.agents.test_agents.test_agents:MockTorchAgent',
-                    batchsize=32,
-                ),
-                valid_datatype='valid',
-            )
+    def test_non_stream_works(self):
+        testing_utils.eval_model(
+            dict(
+                task='integration_tests:chunky',
+                model='parlai.agents.test_agents.test_agents:MockTorchAgent',
+                batchsize=32,
+            ),
+            valid_datatype='valid',
+        )
 
-        with self.assertRaises(ValueError):
-            valid, test = testing_utils.eval_model(
-                dict(
-                    task='integration_tests:chunky',
-                    model='parlai.agents.test_agents.test_agents:MockTorchAgent',
-                    batchsize=32,
-                ),
-                valid_datatype='valid:stream',
-                test_datatype='test',
-            )
+        testing_utils.eval_model(
+            dict(
+                task='integration_tests:chunky',
+                model='parlai.agents.test_agents.test_agents:MockTorchAgent',
+                batchsize=32,
+            ),
+            valid_datatype='valid:stream',
+            test_datatype='test',
+        )
 
 
 class CustomEvaluationTeacher(DialogTeacher):
@@ -373,12 +376,39 @@ class MessageTeacher(_MockTeacher):
                 yield Message({'text': str(j), 'label': str(j * 2)}), j == 1
 
 
+class NoDatafileTeacher(DialogTeacher):
+    def setup_data(self, datafile):
+        yield Message({'text': datafile, 'label': datafile}), True
+
+
 class ViolationTeacher(_MockTeacher):
     def setup_data(self, datafile):
         yield {'text': 'foo', 'episode_done': True}, True
 
 
 class TestDialogTeacher(unittest.TestCase):
+    def test_iter(self):
+        opt = Opt({'datatype': 'valid', 'datapath': '/tmp', 'task': 'test'})
+        teacher = TupleTeacher(opt)
+        # twice to ensure we reset iterators correctly
+        examples = list(teacher)
+        assert len(examples) == 9
+        examples = list(teacher)
+        assert len(examples) == 9
+
+    def test_nodatafile(self):
+        for dt in [
+            'train:ordered',
+            'train:stream:ordered',
+            'valid',
+            'test',
+            'valid:stream',
+            'test:stream',
+        ]:
+            opt = Opt({'datatype': dt, 'datapath': '/tmp', 'task': 'test'})
+            with self.assertRaises(KeyError):
+                NoDatafileTeacher(opt)
+
     def _verify_act(self, act, goal_text, goal_label, episode_done):
         assert 'eval_labels' in act or 'labels' in act
         labels = act.get('labels', act.get('eval_labels'))

@@ -3,20 +3,16 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
+from typing import Optional
+from parlai.core.params import ParlaiParser
+from parlai.core.opt import Opt
 from parlai.core.torch_ranker_agent import TorchRankerAgent
 from parlai.utils.torch import padded_3d
 from parlai.zoo.bert.build import download
 from parlai.utils.io import PathManager
 
 from .bert_dictionary import BertDictionaryAgent
-from .helpers import (
-    get_bert_optimizer,
-    BertWrapper,
-    BertModel,
-    add_common_args,
-    surround,
-    MODEL_PATH,
-)
+from .helpers import BertWrapper, BertModel, add_common_args, surround, MODEL_PATH
 
 import os
 import torch
@@ -30,10 +26,15 @@ class BiEncoderRankerAgent(TorchRankerAgent):
     It is a standalone Agent. It might be called by the Both Encoder.
     """
 
-    @staticmethod
-    def add_cmdline_args(parser):
+    @classmethod
+    def add_cmdline_args(
+        cls, parser: ParlaiParser, partial_opt: Optional[Opt] = None
+    ) -> ParlaiParser:
         add_common_args(parser)
-        parser.set_defaults(encode_candidate_vecs=True)
+        parser.set_defaults(
+            encode_candidate_vecs=True, dict_maxexs=0  # skip building dictionary
+        )
+        return parser
 
     def __init__(self, opt, shared=None):
         # download pretrained models
@@ -59,14 +60,6 @@ class BiEncoderRankerAgent(TorchRankerAgent):
     @staticmethod
     def dictionary_class():
         return BertDictionaryAgent
-
-    def init_optim(self, params, optim_states=None, saved_optim_type=None):
-        self.optimizer = get_bert_optimizer(
-            [self.model],
-            self.opt['type_optimization'],
-            self.opt['learningrate'],
-            fp16=self.opt.get('fp16'),
-        )
 
     def set_vocab_candidates(self, shared):
         """

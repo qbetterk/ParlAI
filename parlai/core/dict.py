@@ -7,6 +7,8 @@
 Contains code for parsing and building a dictionary from text.
 """
 
+from typing import Optional
+from parlai.core.params import ParlaiParser
 from parlai.core.opt import Opt
 from parlai.core.build_data import modelzoo_path
 from parlai.utils.bpe import bpe_factory, BPEHelper
@@ -21,6 +23,15 @@ import re
 import parlai.utils.logging as logging
 from parlai.utils.io import PathManager
 from typing import List
+import enum
+
+
+class TokenizationMode(enum.Enum):
+    TRAIN_TIME_TEXT = 0
+    TRAIN_TIME_LABEL = 1
+    TEST_TIME_TEXT = 2
+    TEST_TIME_LABEL = 3
+
 
 RETOK = re.compile(r'\w+|[^\w\s]|\n', re.UNICODE)
 
@@ -109,12 +120,14 @@ class DictionaryAgent(Agent):
     default_lower = False
     default_textfields = 'text,labels'
 
-    @staticmethod
-    def add_cmdline_args(argparser):
+    @classmethod
+    def add_cmdline_args(
+        cls, parser: ParlaiParser, partial_opt: Optional[Opt] = None
+    ) -> ParlaiParser:
         """
         Add commandline arguments related to the dictionary.
         """
-        dictionary = argparser.add_argument_group('Dictionary Arguments')
+        dictionary = parser.add_argument_group('Dictionary Arguments')
         dictionary.add_argument(
             '-df',
             '--dict-file',
@@ -212,7 +225,7 @@ class DictionaryAgent(Agent):
             'Tasks with additional fields may add to this list to handle '
             'any extra vocabulary.',
         )
-        dictionary = BPEHelper.add_cmdline_args(dictionary)
+        dictionary = BPEHelper.add_cmdline_args(dictionary, partial_opt=partial_opt)
         return dictionary
 
     def __init__(self, opt: Opt, shared=None):
@@ -235,6 +248,9 @@ class DictionaryAgent(Agent):
             'dict_textfields', DictionaryAgent.default_textfields
         ).split(",")
 
+        # used to signal whether we should use training time tricks, like bpe droput
+        self._tokenization_mode = TokenizationMode.TEST_TIME_LABEL
+
         try:
             self.tokenizer_fun = getattr(self, self.tokenizer + '_tokenize')
         except AttributeError:
@@ -247,6 +263,7 @@ class DictionaryAgent(Agent):
             self.tok2ind = shared.get('tok2ind', {})
             self.ind2tok = shared.get('ind2tok', {})
         else:
+            self.additional_special_tokens: List[str] = []
             self.freq = defaultdict(int)
             self.tok2ind = {}
             self.ind2tok = {}
@@ -333,29 +350,23 @@ class DictionaryAgent(Agent):
         """
         self.additional_special_tokens = additional_special_tokens
 
-        if (
-            self.additional_special_tokens
-            and not self.supports_additional_special_tokens()
-        ):
-            raise RuntimeError(
-                f'{self.tokenizer} does not currently support adding additional special tokens'
-            )
-
         for tok in self.additional_special_tokens:
             self.add_token(tok)
 
         for i, tok in enumerate(self.additional_special_tokens):
             self.freq[tok] = 1000000000 + 4 + i
 
-        if self.tokenizer == 'bytelevelbpe':
+        if hasattr(self, 'bpe'):
             self.bpe.add_special_tokens(self, self.additional_special_tokens)
-
-    def supports_additional_special_tokens(self):
-        """
-        Indicates whether the dictionary supports additional special tokens.
-        """
-        # TODO: add to others
-        return self.tokenizer in ['bytelevelbpe', 'split', 'space']
+        elif self.tokenizer in ('split', 're', 'space'):
+            pass
+        else:
+            raise NotImplementedError(
+                f"Special Tokens are not supported with this tokenizer. "
+                f"(--dict-tokenizer {self.tokenizer}). File a github issue or "
+                f"pull request if you need others extended. "
+                f"https://github.com/facebookresearch/ParlAI"
+            )
 
     def is_prebuilt(self):
         """
@@ -518,7 +529,20 @@ class DictionaryAgent(Agent):
     def tokenize(self, text, building=False):
         """
         Return a sequence of tokens from the iterable.
+
+        Also handles special tokens for some tokenizers
         """
+        if self.tokenizer in ('re', 'split', 'space'):
+            for special_token in self.additional_special_tokens:
+                index = text.find(special_token)
+                if index == -1:
+                    continue
+                left = text[:index]
+                right = text[index + len(special_token) :]
+                tokens_left = self.tokenize(left, building) if left else []
+                tokens_right = self.tokenize(right, building) if right else []
+                return tokens_left + [special_token] + tokens_right
+
         if self.lower:
             text = text.lower()
 
@@ -604,7 +628,7 @@ class DictionaryAgent(Agent):
         SPECIAL_TOKENS = {'__UNK__', '__NULL__', '__END__', '__START__'}
         with PathManager.open(filename, 'r', encoding='utf-8', errors='ignore') as read:
             for line in read:
-                split = line.strip().split('\t')
+                split = line.rstrip("\n\r").split('\t')
                 token = unescape(split[0])
                 if lower_special and token in SPECIAL_TOKENS:
                     token = token.lower()
@@ -626,6 +650,7 @@ class DictionaryAgent(Agent):
         If ``sort`` (default ``True``), then first sort the dictionary before saving.
         """
         filename = self.opt['dict_file'] if filename is None else filename
+        make_dir(os.path.dirname(filename))
 
         if self.tokenizer in ['bpe', 'gpt2', 'bytelevelbpe', 'slow_bytelevel_bpe']:
             needs_removal = self.bpe.finalize(
@@ -643,7 +668,6 @@ class DictionaryAgent(Agent):
 
         logging.info(f'Saving dictionary to {filename}')
 
-        make_dir(os.path.dirname(filename))
         mode = 'a' if append else 'w'
         with PathManager.open(filename, mode, encoding='utf-8') as write:
             for i in self.ind2tok.keys():
@@ -655,7 +679,7 @@ class DictionaryAgent(Agent):
         with PathManager.open(filename + '.opt', 'w', encoding='utf-8') as handle:
             json.dump(self.opt, handle, indent=4)
         # save the byte level bpe model file as well
-        if self.tokenizer == 'bytelevelbpe':
+        if self.tokenizer == 'bytelevelbpe' or self.tokenizer == 'slow_bytelevel_bpe':
             # This saves filename-vocab.json and filename-merges.txt as
             # hugging face tokenizer does
             self.bpe.save(os.path.dirname(filename), os.path.basename(filename))
@@ -709,7 +733,7 @@ class DictionaryAgent(Agent):
         else:
             return self.vec2txt(txt_or_vec)
 
-    def txt2vec(self, text, vec_type=list):
+    def txt2vec(self, text: str, vec_type=list):
         """
         Convert a string to a vector (list of ints).
 
@@ -719,7 +743,11 @@ class DictionaryAgent(Agent):
             The type of the returned vector if the input is a string. Suggested
             ``list``, ``tuple``, ``set``, or ``np.ndarray``.
         """
-        itr = (self._word_lookup(token) for token in self.tokenize(str(text)))
+        assert isinstance(
+            text, str
+        ), f'Input to txt2vec must be string, not {type(text)}'
+
+        itr = (self._word_lookup(token) for token in self.tokenize(text))
         if vec_type == list or vec_type == tuple or vec_type == set:
             res = vec_type(itr)
         elif vec_type == np.ndarray:
@@ -744,9 +772,9 @@ class DictionaryAgent(Agent):
             # end of Hugging Face dict, there is an offset of #(extra tokens) between them.
             extra_tokens = 4  # length of special tokens
             vector = [
-                self.bpe.special_tok_map[idx]
-                if idx in self.bpe.special_tok_map
-                else idx - extra_tokens
+                self.bpe.special_tok_map[int(idx)]
+                if int(idx) in self.bpe.special_tok_map
+                else int(idx) - extra_tokens
                 for idx in vector
             ]
             tokens = [self[int(idx)] for idx in vector]
@@ -798,3 +826,22 @@ class DictionaryAgent(Agent):
         Return string representation of frequencies in dictionary.
         """
         return str(self.freq)
+
+    def set_tokenization_mode(self, mode: TokenizationMode):
+        """
+        Indicate what "kind" of tokenization is being done.
+
+        This can be Training Time / Testing Time, and it can be over
+        context or labels.
+
+        This is used to signal from TorchAgent to the dict that it's allowed
+        to enable things like BPE dropout. It is NOT used to indicate whether
+        the dictionary itself is in training time.
+
+        Use True for training time, False for not.
+        """
+        self._context_mode = mode
+        if hasattr(self, 'bpe'):
+            # enable bpe dropout only in texts at training time. disable all
+            # other times
+            self.bpe.enable_bpe_dropout(mode == TokenizationMode.TRAIN_TIME_TEXT)

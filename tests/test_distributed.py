@@ -7,7 +7,6 @@
 import os
 import copy
 import unittest
-import torch.distributed as dist
 import parlai.utils.testing as testing_utils
 import parlai.scripts.build_dict as build_dict
 import parlai.scripts.multiprocessing_train as mp_train
@@ -39,7 +38,7 @@ class TestDistributed(unittest.TestCase):
         learningrate=1e-2,
         batchsize=BATCHSIZE,
         validation_every_n_epochs=5,
-        num_epochs=100,
+        num_epochs=150,
         n_layers=1,
         n_heads=1,
         ffn_size=32,
@@ -65,24 +64,21 @@ class TestDistributed(unittest.TestCase):
             build_dict.build_dict(popt)
 
             valid, test = mp_train.launch_and_train(popt, 31338)
-            dist.destroy_process_group()
 
         return (valid, test)
 
-    @testing_utils.retry()
     def test_generator_distributed(self):
         config = copy.deepcopy(self._base_config)
         valid, test = self._distributed_train_model(config)
 
-        self.assertLessEqual(valid['ppl'], 1.50)
-        self.assertLessEqual(test['ppl'], 1.50)
+        self.assertLessEqual(valid['ppl'], 1.60)
+        self.assertLessEqual(test['ppl'], 1.60)
 
         # Tests that DialogData.get() is doing the right thing
         # Ensure no duplication of examples among workers
         self.assertEqual(valid['exs'].value(), BATCHSIZE)
         self.assertEqual(test['exs'].value(), BATCHSIZE)
 
-    @testing_utils.retry()
     def test_multitask_distributed(self):
         config = copy.deepcopy(self._base_config)
         config['num_epochs'] = 50
@@ -202,8 +198,6 @@ class TestDistributed(unittest.TestCase):
                 pass
             else:
                 self.fail('Did not raise RuntimeError')
-            finally:
-                dist.destroy_process_group()
 
 
 @testing_utils.skipUnlessGPU
@@ -227,7 +221,6 @@ class TestDistributedEval(unittest.TestCase):
             self.assertAlmostEquals(
                 valid[key].value(), valid_mp[key].value(), delta=0.001
             )
-        dist.destroy_process_group()
 
 
 if __name__ == '__main__':

@@ -6,6 +6,8 @@ This directory also contains subfolders for some of the projects which are house
 
 ## Generative Models
 
+- **Style-Controlled Generation** [[project]](https://github.com/facebookresearch/ParlAI/tree/master/projects/style_gen) [[paper]](https://arxiv.org/abs/2009.10855) _Tasks and models for training and evaluating generative models conditioned on a style token_
+
 - **Unlikelihood Training for Consistent Dialogue** [[project]](https://parl.ai/projects/dialogue_unlikelihood/).
   _Methods to reduce copies & repeats, correct vocab usage, and avoiding contradiction via unlikelihood training._
 
@@ -33,7 +35,10 @@ This directory also contains subfolders for some of the projects which are house
   _A new data collection and model evaluation tool, a Messenger-based Chatbot game called Beat the Bot._
 
 
-## Chit-chat
+## Open-domain Dialogue
+
+- **Addressing Contradictions in Dialogue Modeling** [[project]](https://parl.ai/projects/contradiction).
+  _A new task for contradiction detection and its use for non-contradicting generation._
 
 - **Recipes for open-domain chatbots** [[project]](https://parl.ai/projects/recipes).
   _We open source 90M, 2.7B and 9.4B parameter generative models fine-tuned on [BST](https://parl.ai/projects/bst/)._
@@ -59,21 +64,28 @@ _Task & models for chitchat with a given persona._
 
 ## Well-Behaved
 
-- **Dialogue Safety** [[project]](https://parl.ai/projects/dialogue_safety/) [[paper]](https://arxiv.org/abs/1908.06083).
+- **Recipes for Safety in Open-Domain Chatbots** [[project]](https://parl.ai/projects/safety_recipes/) [[paper]](https://arxiv.org/abs/2010.07079).
+  _Methods for improving the safety of open-domain chatbots._
+
+- **Build-It Break-It Fix-It for Dialogue Safety** [[project]](https://parl.ai/projects/dialogue_safety/) [[paper]](https://arxiv.org/abs/1908.06083).
   _Task and method for improving the detection of offensive language in the context of dialogue._
+
+- **Multi-Dimensional Gender Bias Classification** [[project]](https://parl.ai/projects/md_gender/) [[paper]](https://arxiv.org/abs/2005.00614)
+  _Training fine-grained gender bias classifiers to identify gender bias in text._
 
 - **Mitigating Genderation Bias** [[project]](https://parl.ai/projects/genderation_bias/) [[paper]](https://arxiv.org/abs/1911.03842).
   _Analysis and methods for mitigating gender bias in dialogue generation, using LIGHT as a testbed._
 
-- **Multi-Dimensional Gender Bias Classification** [[project]](https://parl.ai/projects/md_gender/) [[paper]](https://arxiv.org/abs/2005.00614)
-  _Training fine-grained gender bias classifiers to identify gender bias in text._
 
 ## Knowledge Grounded
 
 - **Wizard of Wikipedia** [[project]](http://parl.ai/projects/wizard_of_wikipedia/) [[paper]](https://openreview.net/forum?id=r1l73iRqKm).
   _Knowledge-grounded open domain chitchat task & models._
+- **Retrieval Augmentation Reduces Hallucination in Conversation** [[project]](http://parl.ai/projects/hallucination/) [[paper]](https://arxiv.org/abs/2104.07567). _Exploratory architectures that add retrieval mechanisms to dialogue models, reducing hallucination while maintaining conversational ability._
 
 ## Visually Grounded
+
+- **Multi-Modal BlenderBot** [[project]](https://github.com/facebookresearch/ParlAI/tree/master/projects/multimodal_blenderbot/) [[paper]](https://arxiv.org/abs/2010.01082). _Model for multi-modal dialogue about both images and chitchat._
 
 - **Image Chat** [[paper]](https://klshuster.github.io/image_chat/) [[task]](https://github.com/facebookresearch/ParlAI/tree/master/parlai/tasks/image_chat).
   _Task for personality-based engaging dialogue on images._
@@ -81,7 +93,6 @@ _Task & models for chitchat with a given persona._
 - **Personality-Captions** [[project]](http://parl.ai/projects/personality_captions/) [[paper]](https://arxiv.org/abs/1810.10665).
   _Task for personality-based engaging comments on images._
 
-- **Multi-Modal BlenderBot** [[project]](https://github.com/facebookresearch/ParlAI/tree/master/projects/multimodal_blenderbot/) [[paper]](https://arxiv.org/abs/2010.01082). _Model for multi-modal dialogue about both images and chitchat._
 
 ## Environment Grounded
 
@@ -107,6 +118,6 @@ _QA model for answering questions by retrieving and reading knowledge._
 
 ## Evaluation
 
-- **ACUTE-Eval** [[parlai task]](https://github.com/facebookresearch/ParlAI/tree/master/parlai/mturk/tasks/acute_eval) [[paper]](https://arxiv.org/abs/1909.03087).
+- **ACUTE-Eval** [[parlai task]](https://github.com/facebookresearch/ParlAI/tree/master/parlai/crowdsourcing/tasks/acute_eval) [[paper]](https://arxiv.org/abs/1909.03087).
 _ACUTE Eval is a sensitive human evaluation method for dialogue which evaluates whole conversations in a pair-wise fashion, and is our recommended method._
 

@@ -11,6 +11,8 @@ can learn simple behavior easily. They are useful as unit tests for the basic mo
 The corpora are all randomly, but deterministically generated
 """
 
+from typing import Optional
+from parlai.core.params import ParlaiParser
 from parlai.core.teachers import (
     FixedDialogTeacher,
     DialogTeacher,
@@ -28,6 +30,9 @@ import string
 import json
 from abc import ABC
 from typing import Tuple, List
+import time
+from parlai.core.message import Message
+from parlai.utils.data import DatatypeHelper
 from parlai.utils.io import PathManager
 
 # default parameters
@@ -194,8 +199,12 @@ class CandidateTeacher(CandidateBaseTeacher, DialogTeacher):
 
 class OverfitTeacher(CandidateTeacher, DialogTeacher):
     @classmethod
-    def add_cmdline_args(self, argparser):
-        argparser.add_argument('--corpus-size', default=4, type=int)
+    def add_cmdline_args(
+        cls, parser: ParlaiParser, partial_opt: Optional[Opt] = None
+    ) -> ParlaiParser:
+        super().add_cmdline_args(parser, partial_opt)
+        parser.add_argument('--corpus-size', default=4, type=int)
+        return parser
 
     def __init__(self, opt, shared=None):
         self.corpussize = opt.get('corpus_size', 4)
@@ -219,8 +228,12 @@ class OverfitTeacher(CandidateTeacher, DialogTeacher):
 
 class OverfitMultiturnTeacher(CandidateTeacher, DialogTeacher):
     @classmethod
-    def add_cmdline_args(self, argparser):
-        argparser.add_argument('--corpus-size', default=4, type=int)
+    def add_cmdline_args(
+        cls, parser: ParlaiParser, partial_opt: Optional[Opt] = None
+    ) -> ParlaiParser:
+        super().add_cmdline_args(parser, partial_opt)
+        parser.add_argument('--corpus-size', default=4, type=int)
+        return parser
 
     def __init__(self, opt, shared=None):
         self.corpussize = opt.get('corpus_size', 4)
@@ -474,22 +487,42 @@ class ChunkyTeacher(ChunkTeacher):
 
     def create_message(self, sample_item, entry_idx=0):
         text, label = sample_item
-        return {'text': text, 'labels': [label], 'episode_done': True}
+        return Message({'text': text, 'labels': [label], 'episode_done': True})
 
 
-class InfiniteTrainTeacher(ChunkyTeacher):
+class ChunkySmallBufferTeacher(ChunkyTeacher):
+    def get_buffersize(self):
+        return NUM_TEST // 2
+
+
+class InfiniteTrainTeacher(FixedDialogTeacher):
     """
-    Chunk teacher with an effectively infinite number of training examples.
+    Teacher with an effectively infinite number of training examples.
     """
 
-    def get_num_samples(self, opt) -> Tuple[int, int]:
-        datatype = opt['datatype']
-        if 'train' in datatype:
-            return INFINITE, INFINITE
-        elif 'valid' in datatype:
-            return NUM_TEST, NUM_TEST
-        elif 'test' in datatype:
-            return NUM_TEST, NUM_TEST
+    def num_examples(self):
+        return INFINITE
+
+    def num_episodes(self):
+        return INFINITE
+
+    def get(self, episode_idx=0, entry_idx=0):
+        field = (
+            'labels'
+            if DatatypeHelper.is_training(self.opt['datatype'])
+            else 'eval_labels'
+        )
+        return Message({'text': '1 2 3 4', field: ['1 2 3 4'], 'episode_done': True})
+
+
+class ChunkySlowTeacher(ChunkyTeacher):
+    """
+    Unique examples that load slowly.
+    """
+
+    def load_from_chunk(self, chunk_idx: int):
+        time.sleep(0.1)
+        return super().load_from_chunk(chunk_idx)
 
 
 class ShortFixedTeacher(FixedDialogCandidateTeacher):

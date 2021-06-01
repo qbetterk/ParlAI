@@ -1,9 +1,22 @@
-**NOTE: this code is incompatible with the latest version of Mephisto, beginning with the changes made in [PR #246](https://github.com/facebookresearch/Mephisto/pull/246). This task will be upgraded shortly to regain compatibility with the latest version; in the meantime, please use the last version release of Mephisto prior to that PR, [v0.1](https://github.com/facebookresearch/Mephisto/releases/tag/v0.1).**
-
 # Turn Annotations Static Task
-This task renders conversations from a file and asks for turn by turn annotations of them. 
-This is in contrast to the crowdsourcing task turn_annotations which collects turn by turn annotations from a live human-model conversation.
+This task renders conversations from a file and asks for turn-by-turn annotations of them. This is in contrast to the crowdsourcing task `parlai.crowdsourcing.tasks.model_chat`, which collects turn-by-turn annotations from a live human/model conversation.
 
-Look at turn_annotations_blueprint.py for various parameters including passing in custom annotation bucket definitions using the --annotation-buckets flag, being able to group multiple conversations into one HIT using the --subtasks-per-unit flag, passing in onboarding data with answers, and being able to ask only for the final utterance as an annotation.
+Two variants of the blueprint are supported:
+- `TurnAnnotationStaticBlueprint`
+    - The base static turn-annotations task
+    - Called with `python parlai/crowdsourcing/tasks/turn_annotations_static/run.py`
+- `TurnAnnotationStaticInFlightQABlueprint`
+    - Includes the ability to add an additional in-flight (i.e. mid-HIT) quality assurance check
+    - Called with `python parlai/crowdsourcing/tasks/turn_annotations_static/run_in_flight_qa.py`
 
-Two variants of the Blueprint is supported: TurnAnnotationStaticBlueprint and TurnAnnotationStaticInFlightQABlueprint. The latter includes the ability to add an inflight additional Quality Assurance task.
+For both variants of the blueprint, it is required to pass in your own file of conversations with `mephisto.blueprint.data_jsonl=${PATH_TO_CONVERSATIONS}`.
+
+See `turn_annotations_blueprint.py` for various parameters of this task, including passing in custom annotation bucket definitions using the `annotation_buckets` YAML flag, being able to group multiple conversations into one HIT using the `subtasks_per_unit` flag, passing in onboarding data with answers, and being able to ask only for the final utterance as an annotation.
+
+The validation of the response field is handled by `validateFreetextResponse` function in `task_components.jsx` and checks for a minimum number of characters, words, and vowels specified by function parameters. To change this, modify the values passed in to the function call or override the function to set your own validation requirements.
+
+**NOTE**: See [parlai/crowdsourcing/README.md](https://github.com/facebookresearch/ParlAI/blob/master/parlai/crowdsourcing/README.md) for general tips on running `parlai.crowdsourcing` tasks, such as how to specify your own YAML file of configuration settings, how to run tasks live, how to set parameters on the command line, etc.
+
+## Analysis
+
+Run `analysis/compile_results.py` to compile and save statistics about collected static turn annotations. The `TurnAnnotationsStaticResultsCompiler` in that script uses dummy annotation buckets by default; set `--problem-buckets` in order to define your own. Set `--results-folders` to a comma-separated list of the folders that the data was saved to (likely of the format `"/basefolder/mephisto/data/runs/NO_PROJECT/123"`)

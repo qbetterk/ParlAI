@@ -9,13 +9,14 @@ Basic script which allows local human keyboard input to talk to a trained model.
 ## Examples
 
 ```shell
-parlai interactive -m drqa -mf "models:drqa/squad/model"
+parlai interactive --model-file "zoo:tutorial_transformer_generator/model"
 ```
 
 When prompted, enter something like: `Bob is Blue.\\nWhat is Bob?`
 
-Input is often model or task specific, but in drqa, it is always
-`context '\\n' question`.
+Input is often model or task specific. Some tasks will automatically format
+The input with context for the task, e.g. `-t convai2` will automatically add
+personas.
 """
 from parlai.core.params import ParlaiParser
 from parlai.core.agents import create_agent
@@ -42,10 +43,10 @@ def setup_args(parser=None):
         'examples with text candidates',
     )
     parser.add_argument(
-        '--display-ignore-fields',
+        '--display-add-fields',
         type=str,
-        default='label_candidates,text_candidates',
-        help='Do not display these fields',
+        default='',
+        help='Display these fields when verbose is off (e.g., "--display-add-fields label_candidates,beam_texts")',
     )
     parser.add_argument(
         '-it',
@@ -69,8 +70,8 @@ def setup_args(parser=None):
         help='Format to save logs in. conversations is a jsonl format, parlai is a text format.',
     )
     parser.set_defaults(interactive_mode=True, task='interactive')
-    LocalHumanAgent.add_cmdline_args(parser)
-    WorldLogger.add_cmdline_args(parser)
+    LocalHumanAgent.add_cmdline_args(parser, partial_opt=None)
+    WorldLogger.add_cmdline_args(parser, partial_opt=None)
     return parser
 
 

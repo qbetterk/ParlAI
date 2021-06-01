@@ -14,6 +14,7 @@ completed easily.
 Also contains helper classes for loading scripts, etc.
 """
 
+import sys
 import io
 import argparse
 from typing import List, Optional, Dict, Any
@@ -34,6 +35,24 @@ def setup_script_registry():
     """
     for module in pkgutil.iter_modules(parlai.scripts.__path__, 'parlai.scripts.'):
         importlib.import_module(module.name)
+    try:
+        import parlai_fb.scripts
+
+        for module in pkgutil.iter_modules(
+            parlai_fb.scripts.__path__, 'parlai_fb.scripts.'
+        ):
+            importlib.import_module(module.name)
+    except ImportError:
+        pass
+    try:
+        import parlai_internal.scripts
+
+        for module in pkgutil.iter_modules(
+            parlai_internal.scripts.__path__, 'parlai_internal.scripts.'
+        ):
+            importlib.import_module(module.name)
+    except ImportError:
+        pass
 
 
 class ParlaiScript(object):
@@ -50,7 +69,6 @@ class ParlaiScript(object):
         Create the parser with args.
         """
         # we want to later deprecate this for add_cmdline_args
-        pass
 
     def __init__(self, opt: Opt):
         self.opt = opt
@@ -84,6 +102,7 @@ class ParlaiScript(object):
 
     @classmethod
     def _run_from_parser_and_opt(cls, opt: Opt, parser: ParlaiParser):
+        logging.set_log_level(opt.get('loglevel', 'info').upper())
         script = cls(opt)
         script.parser = parser
         return script.run()
@@ -148,8 +167,15 @@ class _SupercommandParser(ParlaiParser):
         sa = [a for a in self._actions if isinstance(a, argparse._SubParsersAction)]
         assert len(sa) == 1
         sa = sa[0]
-        for _, v in sa.choices.items():
-            v.add_extra_args(args)
+        if args is None:
+            args = sys.argv[1:]
+        if args and args[0] in sa.choices:
+            # if at all possible, try to use the actual subcommand only for
+            # the add extra args, to prevent parse errors in other commands.
+            sa.choices[args[0]].add_extra_args(args)
+        else:
+            for _, v in sa.choices.items():
+                v.add_extra_args(args)
 
     def parse_known_args(self, args=None, namespace=None, nohelp=False):
         known, unused = super().parse_known_args(args, namespace, nohelp)

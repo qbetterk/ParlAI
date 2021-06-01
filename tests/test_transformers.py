@@ -9,14 +9,72 @@ Test many variants of transformers.
 """
 
 import os
+import torch
 import unittest
+from unittest.mock import MagicMock
 import pytest
 import parlai.utils.testing as testing_utils
+from parlai.agents.transformer.modules import (
+    TransformerFFN,
+    TransformerGeneratorModel,
+    TransformerEncoder,
+    TransformerEncoderLayer,
+)
 from parlai.core.agents import create_agent
 from parlai.core.agents import create_agent_from_model_file
+from parlai.core.dict import DictionaryAgent
 from parlai.core.opt import Opt
 from .test_dict import DEFAULT_BYTELEVEL_BPE_VOCAB, DEFAULT_BYTELEVEL_BPE_MERGE
 from parlai.core.params import ParlaiParser
+
+
+class TestTransformerBase(unittest.TestCase):
+    """
+    Base Tester class for sharing functionality.
+    """
+
+    def _test_resize_embeddings(self, model):
+        with testing_utils.tempdir() as tmpdir:
+            model_file = os.path.join(tmpdir, 'model_file')
+            _, _ = testing_utils.train_model(
+                dict(
+                    model=model,
+                    task='integration_tests:short_fixed',
+                    n_layers=1,
+                    n_encoder_layers=2,
+                    n_decoder_layers=4,
+                    num_epochs=1,
+                    dict_tokenizer='bytelevelbpe',
+                    bpe_vocab=DEFAULT_BYTELEVEL_BPE_VOCAB,
+                    bpe_merge=DEFAULT_BYTELEVEL_BPE_MERGE,
+                    bpe_add_prefix_space=False,
+                    model_file=model_file,
+                    save_after_valid=True,
+                )
+            )
+
+            # now create agent with special tokens
+            parser = ParlaiParser()
+            parser.set_params(
+                model=model,
+                task='integration_tests:short_fixed',
+                n_layers=1,
+                n_encoder_layers=2,
+                n_decoder_layers=4,
+                dict_tokenizer='bytelevelbpe',
+                bpe_vocab=DEFAULT_BYTELEVEL_BPE_VOCAB,
+                bpe_merge=DEFAULT_BYTELEVEL_BPE_MERGE,
+                bpe_add_prefix_space=False,
+                model_file=model_file,
+                save_after_valid=True,
+                special_tok_lst='PARTY,PARROT',
+            )
+            opt = parser.parse_args([])
+            agent = create_agent(opt)
+            # assert that the embeddings were resized
+            assert agent.resized_embeddings
+            # assert model has special tokens
+            self.assertEqual(agent.special_toks, ['PARTY', 'PARROT'])
 
 
 class TestTransformerRanker(unittest.TestCase):
@@ -199,7 +257,7 @@ class TestTransformerRanker(unittest.TestCase):
         self.assertGreaterEqual(test['hits@1'], 0.90)
 
 
-class TestTransformerGenerator(unittest.TestCase):
+class TestTransformerGenerator(TestTransformerBase):
     """
     Checks that the generative transformer can learn basic tasks.
     """
@@ -278,7 +336,7 @@ class TestTransformerGenerator(unittest.TestCase):
     @pytest.mark.nofbcode
     def test_beamsearch_return_all_texts(self):
         """
-        Test beam_texts for beam_size > 1
+        Test beam_texts for beam_size > 1.
         """
         size = 3
 
@@ -496,13 +554,6 @@ class TestTransformerGenerator(unittest.TestCase):
         except ImportError:
             # fairseq not installed, let's just move on
             pass
-        try:
-            import nltk  # noqa: F401
-
-            assert valid['nltk_bleu1'] > 0.9
-        except ImportError:
-            # nltk not installed, let's just move on
-            pass
 
     def test_asymmetry(self):
         opt = Opt({'model': 'transformer/generator', 'n_layers': 1})
@@ -560,48 +611,7 @@ class TestTransformerGenerator(unittest.TestCase):
 
     @pytest.mark.nofbcode
     def test_resize_embeddings(self):
-        # train original model
-        with testing_utils.tempdir() as tmpdir:
-            model_file = os.path.join(tmpdir, 'model_file')
-            _, _ = testing_utils.train_model(
-                dict(
-                    model='transformer/generator',
-                    task='integration_tests:short_fixed',
-                    n_layers=1,
-                    n_encoder_layers=2,
-                    n_decoder_layers=4,
-                    num_epochs=1,
-                    dict_tokenizer='bytelevelbpe',
-                    bpe_vocab=DEFAULT_BYTELEVEL_BPE_VOCAB,
-                    bpe_merge=DEFAULT_BYTELEVEL_BPE_MERGE,
-                    bpe_add_prefix_space=False,
-                    model_file=model_file,
-                    save_after_valid=True,
-                )
-            )
-
-            # now create agent with special tokens
-            parser = ParlaiParser()
-            parser.set_params(
-                model='transformer/generator',
-                task='integration_tests:short_fixed',
-                n_layers=1,
-                n_encoder_layers=2,
-                n_decoder_layers=4,
-                dict_tokenizer='bytelevelbpe',
-                bpe_vocab=DEFAULT_BYTELEVEL_BPE_VOCAB,
-                bpe_merge=DEFAULT_BYTELEVEL_BPE_MERGE,
-                bpe_add_prefix_space=False,
-                model_file=model_file,
-                save_after_valid=True,
-                special_tok_lst='PARTY,PARROT',
-            )
-            opt = parser.parse_args([])
-            agent = create_agent(opt)
-            # assert that the embeddings were resized
-            assert agent.resized_embeddings
-            # assert model has special tokens
-            self.assertEqual(agent.special_toks, ['PARTY', 'PARROT'])
+        self._test_resize_embeddings('transformer/generator')
 
 
 class TestClassifier(unittest.TestCase):
@@ -763,6 +773,16 @@ class TestLearningRateScheduler(unittest.TestCase):
         )
 
 
+class TestPolyencoder(TestTransformerBase):
+    """
+    Unit tests for PolyencoderAgent.
+    """
+
+    @pytest.mark.nofbcode
+    def test_resize_embeddings(self):
+        self._test_resize_embeddings('transformer/polyencoder')
+
+
 @testing_utils.skipUnlessVision
 class TestImagePolyencoder(unittest.TestCase):
     """
@@ -859,6 +879,103 @@ class TestImagePolyencoder(unittest.TestCase):
         assert (
             valid['accuracy'] > 0.1
         ), f'ImagePolyencoderAgent val-set accuracy on a simple task was {valid["accuracy"].value():0.2f}.'
+
+
+class TestSwappableComponents(unittest.TestCase):
+    def _opt(self, **kwargs):
+        return Opt(
+            batchsize=4,
+            optimizer='adam',
+            n_layers=1,
+            n_heads=4,
+            ffn_size=16,
+            embedding_size=16,
+            skip_generation=True,
+            **kwargs,
+        )
+
+    def test_swap_encoder_attention(self):
+        CustomFFN = type('CustomFFN', (TransformerFFN,), {})
+        CustomFFN.forward = MagicMock()
+        wrapped_class = TransformerGeneratorModel.with_components(
+            encoder=TransformerEncoder.with_components(
+                layer=TransformerEncoderLayer.with_components(feedforward=CustomFFN)
+            )
+        )
+        opt = self._opt()
+        CustomFFN.forward.assert_not_called
+        model = wrapped_class(opt=opt, dictionary=DictionaryAgent(opt))
+        assert isinstance(model, TransformerGeneratorModel)  # type: ignore
+        try:
+            model(torch.zeros(1, 1).long(), ys=torch.zeros(1, 1).long())  # type: ignore
+        except TypeError:
+            pass
+        finally:
+            CustomFFN.forward.assert_called
+
+    def test_swap_is_not_persisted_in_class(self):
+        opt = self._opt()
+        dictionary = DictionaryAgent(opt)
+
+        CustomFFN = type('CustomFFN', (TransformerFFN,), {})
+        wrapped_class = TransformerGeneratorModel.with_components(
+            encoder=TransformerEncoder.with_components(
+                layer=TransformerEncoderLayer.with_components(feedforward=CustomFFN)
+            )
+        )
+        model = wrapped_class(opt=opt, dictionary=dictionary)
+        assert (
+            model.swappables.encoder.swappables.layer.swappables.feedforward
+            == CustomFFN
+        )  # type: ignore
+
+        another_model = TransformerGeneratorModel(opt, dictionary)
+        assert another_model.swappables != model.swappables
+        assert issubclass(
+            another_model.swappables.encoder, TransformerEncoder
+        )  # type: ignore
+
+        wrapped_class.swap_components(
+            encoder=TransformerEncoder.with_components(
+                layer=TransformerEncoderLayer.with_components(
+                    feedforward=TransformerFFN
+                )
+            )
+        )
+        one_more_model = wrapped_class(opt=opt, dictionary=dictionary)
+        assert (
+            one_more_model.swappables.encoder.swappables.layer.swappables.feedforward
+            == TransformerFFN
+        )  # type: ignore
+
+    def test_examples_variant(self):
+        opt = ParlaiParser(True, True).parse_kwargs(
+            model='parlai.agents.examples.transformer_variant:TransformerVariantAgent'
+        )
+        model = create_agent(opt)
+        # send the model a single training example to ensure it can forward/backward
+        model.observe({'text': '1 2 3 4', 'labels': ['1 2 3 4'], 'episode_done': True})
+        model.act()
+        # send the model a single validation example
+        model.observe(
+            {'text': '1 2 3 4', 'eval_labels': ['1 2 3 4'], 'episode_done': True}
+        )
+        model.act()
+
+    def test_examples_configurable(self):
+        opt = ParlaiParser(True, True).parse_kwargs(
+            model='parlai.agents.examples.transformer_variant:ConfigurableTransformerAgent',
+            decoder_ffn_variants='two',
+        )
+        model = create_agent(opt)
+        # send the model a single training example to ensure it can forward/backward
+        model.observe({'text': '1 2 3 4', 'labels': ['1 2 3 4'], 'episode_done': True})
+        model.act()
+        # send the model a single validation example
+        model.observe(
+            {'text': '1 2 3 4', 'eval_labels': ['1 2 3 4'], 'episode_done': True}
+        )
+        model.act()
 
 
 if __name__ == '__main__':

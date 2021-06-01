@@ -16,6 +16,7 @@ As an example, try running:
 `parlai display_data -t genderation_bias:controllable_task:convai2`
 """
 
+from parlai.core.params import ParlaiParser
 from parlai.core.message import Message
 from parlai.core.opt import Opt
 from parlai.core.teachers import FixedDialogTeacher
@@ -45,8 +46,11 @@ class ControllableTaskTeacher(FixedDialogTeacher):
     in which we append to the context a special classification token.
     """
 
-    @staticmethod
-    def add_cmdline_args(parser):
+    @classmethod
+    def add_cmdline_args(
+        cls, parser: ParlaiParser, partial_opt: Optional[Opt] = None
+    ) -> ParlaiParser:
+        super().add_cmdline_args(parser, partial_opt)
         flattened = parser.add_argument_group('ControllableTaskTeacher Flattening Args')
         flattened.add_argument(
             '--flatten-include-labels',
@@ -92,8 +96,7 @@ class ControllableTaskTeacher(FixedDialogTeacher):
         tasks = get_original_task_module(opt, multi_possible=True)
         for task in tasks:
             if hasattr(task, 'add_cmdline_args'):
-                task.add_cmdline_args(parser)
-
+                task.add_cmdline_args(parser, partial_opt=partial_opt)
         return parser
 
     def __init__(self, opt: Opt, shared: TShared = None):
@@ -254,7 +257,7 @@ class ControllableTaskTeacher(FixedDialogTeacher):
 
         if opt['invalidate_cache']:
             # invalidate the cache and remove the existing data
-            logging.warn(
+            logging.warning(
                 f' [ WARNING: invalidating cache at {self.save_path} and rebuilding the data. ]'
             )
             if self.save_path == most_recent:
@@ -282,7 +285,7 @@ class ControllableTaskTeacher(FixedDialogTeacher):
                 f.write(json_data)
             logging.info(f'[ Data successfully saved to path: {self.save_path} ]')
         except Exception:
-            logging.warn('Data is not json serializable; not saving')
+            logging.warning('Data is not json serializable; not saving')
 
     def get(self, episode_idx: int, entry_idx: int = 0) -> Message:
         """
