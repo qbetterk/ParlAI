@@ -35,7 +35,7 @@ from parlai.utils.io import PathManager
 import parlai.utils.logging as logging
 from parlai.core.metrics import SumMetric, AverageMetric, FairseqBleuMetric
 from parlai.utils.fp16 import FP16SafeCrossEntropy
-from parlai.utils.focalloss import SequenceFocalLoss
+# from parlai.utils.focalloss import SequenceFocalLoss
 from parlai.utils.torch import (
     neginf,
     total_parameters,

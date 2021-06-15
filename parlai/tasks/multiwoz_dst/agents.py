@@ -47,7 +47,8 @@ class MultiWozDSTTeacher(FixedDialogTeacher):
         self.reset()
 
     @classmethod
-    def add_cmdline_args(cls, argparser):
+    # def add_cmdline_args(cls, argparser):
+    def add_cmdline_args(cls, argparser, partial_opt):
         agent = argparser.add_argument_group('MultiWozDST Teacher Args')
         agent.add_argument(
             '-dall',
@@ -99,6 +100,7 @@ class MultiWozDSTTeacher(FixedDialogTeacher):
             default='2.1',
             help="specify to use multiwoz 2.1 or 2.2 (default: 2.1).",
         )
+        return argparser
 
     def _load_txt(self, file_path):
         with open(file_path) as df:

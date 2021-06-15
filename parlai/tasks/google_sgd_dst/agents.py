@@ -55,7 +55,7 @@ class Google_SGD_DST_Teacher(FixedDialogTeacher):
         return data
 
     @classmethod
-    def add_cmdline_args(cls, argparser):
+    def add_cmdline_args(cls, argparser, partial_opt):
         agent = argparser.add_argument_group('Google SGD DST Teacher Args')
         agent.add_argument(
             '--just_test',
@@ -63,6 +63,7 @@ class Google_SGD_DST_Teacher(FixedDialogTeacher):
             default=False,
             help="True if one would like to test agents with small amount of data (default: False).",
         )
+        return argparser
 
     def _setup_data(self, data_path, jsons_path):
         print('loading: ' + data_path)
