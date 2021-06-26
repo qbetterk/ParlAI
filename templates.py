@@ -92,7 +92,7 @@ class ABasics:
     """
     prefix = """
         PREFIX -> (APOLOGY | ACKNOWLEDGE | OTHER) CM
-        APOLOGY -> [oh | ah] [CM] ([yeah] sorry | [yeah] my (bad | fault) | whoops | oops | right) | i_m sorry | oh
+        APOLOGY -> [(oh | ah) CM] ([yeah] sorry | [yeah] my (bad | fault) | whoops | oops | right) | i_m sorry | oh
         ACKNOWLEDGE -> [oh] ([yes CM] sure | [yes CM] of course | right | yeah | allright ) | [yeah] no (prob | problem | worries) | ok | yeah | yes
         OTHER -> let me clear that up | let_s see
     """
@@ -143,7 +143,7 @@ class ABasics_Level3:
 
 
     object = """
-        OBJECT -> (the | that ) SHORT-ATT one  | the [SHORT-ATT] one that [LONG-ATT]
+        OBJECT -> (the | that ) SHORT-ATT one  | the [SHORT-ATT] one that LONG-ATT
     """
 
 

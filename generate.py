@@ -3,60 +3,59 @@
 import sys, os
 import json
 sys.path.append("../")
-
-from Klickitat.package import KlickitatGenerator, KlickitatGrammarCollection
-from templates import QBasics, ABasics_Level1, ABasics_Level2, ABasics_Level3
 import numpy as np
 import pdb
+from tqdm import tqdm
+
+from Klickitat.package import KlickitatGenerator, KlickitatGrammarCollection
+from templates import QBasics, ABasics, ABasics_Level1, ABasics_Level2, ABasics_Level3
+
 np.random.seed(0)
-DOMAINS = ["hotel"]
+DOMAINS = ["hotel", "restaurant", "attraction"]
 
 class Generate(object):
     """docstring for Generate"""
-    def __init__(self, arg=None):
+    def __init__(self, data_dir=None):
         super(Generate, self).__init__()
         self.db_dir = "data/multiwoz_dst/MULTIWOZ2.1/"
-        self.domain = "hotel"
-        self.db_path = os.path.join(self.db_dir, f"{self.domain}_db.json")
+        if data_dir is None:
+            self.target_dir = "data/disambiguation/"
+        else:
+            self.target_dir = data_dir
 
-        self.target_dir = "data/disambiguation/"
     def _load_json(self, file_path):
         with open(file_path) as df:
             data = json.loads(df.read().lower())
         return data
 
     def extract_entity(self, path=None):
-        if path is None:
-            path = self.db_path
-        self.db_data = self._load_json(path)
-        self.db_name = [item["name"] for item in self.db_data]
+        self.db_data, self.db_name = {}, {}
+        for domain in DOMAINS:
+            path = os.path.join(self.db_dir, f"{domain}_db.json")
+            self.db_data[domain] = self._load_json(path)
+            self.db_name[domain] = [item["name"] for item in self.db_data[domain]]
 
     # # # build generators
-    def build_generator(self, level=1):
-        # load entities from database
-        self.extract_entity()
-        # sample candidates
-        cands = np.random.choice(self.db_name, size=5)
+    def build_generator(self, domain, level="1", cands=None, index=None):
         # # # build binging 
         self.bind = {
-            "DOMAIN": [self.domain], 
+            "DOMAIN": [domain], 
             "A": [cands[0]],
             "B": [cands[1]],
             "C": [cands[2]],
-            "D": [cands[3]],
-            "E": [cands[4]]}
-        # self.bind = {"DOMAIN": bind_domain, "NAME": bind_db_name}
+            }
+        positions = ["first", "second", "third"]
         # # # generator for questions
         self.gen_q = KlickitatGenerator(QBasics.combined_grammar, 
                             binding=self.bind, linter="not-strict")
         # # # generator for answers
-        if level == 1:
-            self.gen_a = KlickitatGenerator(ABasics_Level1.combined_grammar, 
-                                binding=self.bind, linter="not-strict")
-        elif level == 2:
-            self.gen_a = KlickitatGenerator(ABasics_Level2.combined_grammar, 
-                                binding=self.bind, linter="not-strict")
-        elif level == 3:
+        if level == "1":
+            self.gen_a = KlickitatGenerator(ABasics.combined_grammar, 
+                                binding={"OBJECT":[f"the {cands[index]}"]}, linter="not-strict")
+        elif level == "2":
+            self.gen_a = KlickitatGenerator(ABasics.combined_grammar, 
+                                binding={"OBJECT":[f"the {positions[index]} one"]}, linter="not-strict")
+        elif level == "3":
             self.gen_a = KlickitatGenerator(ABasics_Level3.combined_grammar, 
                                 binding=self.bind, linter="not-strict")
 
@@ -79,27 +78,52 @@ class Generate(object):
         return sent
 
     # # # generate data
-    def generate_data(self, path=None, data_size=100):
+    def generate_data(self, filename=None, level="1", data_size=100):
         # check path
-        if dir_path is None:
-            dir_path = self.target_dir
-        if not os.path.exists(dir_path):
-            os.makedirs(dir_path)
-        self.target_file_path = os.path.join(dir_path, "data.json")
+        if filename is None:
+            filename = f"data_level{level}.json"
+        if not os.path.exists(self.target_dir):
+            os.makedirs(self.target_dir)
+        self.target_file_path = os.path.join(self.target_dir, filename)
 
+        # initialization
         data = []
-        for idx in range(data_size):
-            self.domain = np.random.choice(DOMAINS)
-            self.build_generator()
-            sys_utt = self.replace_punc(self.gen_q.generate_utterance(root="ROOT"))
-            usr_utt = self.replace_punc(self.gen_a.generate_utterance(root="ROOT"))
-            pdb.set_trace()
-            data.append({
-                "system" : sys_utt,
-                "user" : usr_utt,
-                "output" : ""
-                })
+        # load entities from database
+        self.extract_entity()
 
+        for idx in tqdm(range(data_size)):
+            # randomize
+            domain = np.random.choice(DOMAINS)
+            cands = np.random.choice(self.db_name[domain], size=3, replace=False)
+            index = np.random.choice(len(cands))
+            level_ = np.random.choice(list(level))
+
+            # generate
+            self.build_generator(domain=domain, level=level_, cands=cands, index=index)
+
+            for i in range(12): # train:dev:test=10:1:1
+                sys_utt = self.replace_punc(self.gen_q.generate_utterance(root="ROOT"))
+                usr_utt = self.replace_punc(self.gen_a.generate_utterance(root="ROOT"))
+                data.append({
+                    "system" : sys_utt,
+                    "user"   : usr_utt,
+                    "output" : cands[index],
+                    "domain" : domain
+                    })
+
+        # save
+        np.random.shuffle(data)
+        with open(self.target_file_path, "w+") as tf:
+            json.dump(data, tf, indent=2)
+        last_train_idx, last_valid_idx = len(data) * 10 // 12, len(data) * 11 // 12
+
+        train, valid, test = data[:last_train_idx], data[last_train_idx : last_valid_idx], data[last_valid_idx:]
+        with open(self.target_file_path.replace(".json", "_train.json"), "w+") as tf:
+            json.dump(train, tf, indent=2)
+        with open(self.target_file_path.replace(".json", "_valid.json"), "w+") as tf:
+            json.dump(valid, tf, indent=2)
+        with open(self.target_file_path.replace(".json", "_test.json"), "w+") as tf:
+            json.dump(test, tf, indent=2)
 
 
 
@@ -115,7 +139,9 @@ class Generate(object):
 
 def main():
     gen = Generate()
-    gen.test(5)
+    # gen.generate_data(filename="data_test.json", data_size=100)
+    gen.generate_data(level="12", data_size=100)
+    # gen.generate_data(level="2", data_size=10000)
 
 if __name__ == "__main__":
     main()

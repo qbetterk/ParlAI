@@ -19,12 +19,15 @@ Stage 1: care only for the ambiguation in the following format:
     Target: DST for the user response --> disambiguation
 
 """
+DOMAINS = ["hotel","restaurant","attraction"]
+
 class AnalyzeMultiWOZ(object):
     """docstring for AnalyzeMultiWOZ"""
-    def __init__(self, args):
+    def __init__(self, args=None):
         super(AnalyzeMultiWOZ, self).__init__()
         self.args = args
-        self.data_dir = "data/multiwoz_dst/MULTIWOZ2.2"
+        self.data_dir = "data/multiwoz_dst/MULTIWOZ2.2/"
+        self.db_dir = "data/multiwoz_dst/MULTIWOZ2.1/"
         
     def _load_txt(self, file_path):
         with open(file_path) as df:
@@ -63,14 +66,83 @@ class AnalyzeMultiWOZ(object):
             for turn in dial["turns"]:
                 for frame in turn["frames"]:
                     pdb.set_trace()
-                    # if frame.get("service_results") is not None:
-                    #     print(turn["speaker"])
-                    #     print(turn["utterance"])
-                    #     print("*"*10)
-                    #     pdb.set_trace()
 
-                # if len(turn["frames"]) > 1:
-                #     pdb.set_trace()
+
+    def _load_db(self):
+        self.db_data = {}
+        for domain in ["hotel","restaurant","attraction"]:
+            path = os.path.join(self.db_dir, f"{domain}_db.json")
+            self.db_data[domain] = self._load_json(path)
+
+    def count_db_result(self, mode="test"):
+        data_folder = os.path.join(self.data_dir, mode)
+        self.data = self._load_data(data_folder)
+        self._load_db()
+
+        dial_count_format = []
+        for dial in tqdm(self.data):
+            if set(DOMAINS).intersection(set(dial["services"])):
+                turns = []
+                dial_count_format.append({
+                    "dialogue_id": dial["dialogue_id"],
+                    "services"   : dial["services"],
+                    "turns"      : turns,
+                    })
+            else:
+                continue
+
+            prev_turn = None
+            for turn in dial["turns"]:
+                # slots = []
+                count = defaultdict(int)
+                slots = set()
+                flag2 = 0
+                for frame in turn["frames"]:
+                    if frame["service"] in DOMAINS and \
+                        "state" in frame and \
+                         frame["state"]["slot_values"] != {}:
+
+                        if prev_turn is not None:
+                            frame_prev = prev_turn["frames"][turn["frames"].index(frame)]
+                            if "state" in frame_prev and \
+                                frame_prev["state"]["slot_values"] == frame["state"]["slot_values"]:
+                                continue
+
+                        for result in self.db_data[frame["service"]]:
+                            flag = 0
+
+                            for dom_type in frame["state"]["slot_values"]:
+                                dom, slot_type = dom_type.split("-")
+                                if slot_type.startswith("book"):
+                                    continue
+
+                                slot_value = frame["state"]["slot_values"][dom_type][0]
+                                slots.add(f"{dom} {slot_type} {slot_value}")
+
+                                if slot_value != "dontcare" and result[slot_type] != slot_value:
+                                    flag = 1
+                                    break
+                            if not flag:
+                                count[frame["service"]] += 1
+                if turn["speaker"] == "user":
+                    prev_turn = turn
+
+                # print(count)
+                # pdb.set_trace()
+                if count != {}:
+                    turns.append({
+                        "turn_id" : turn["turn_id"],
+                        "utterance" : turn["utterance"],
+                        "speaker" : turn["speaker"],
+                        "result_num" : count,
+                        "slots" : ", ".join(list(slots))
+                        })
+
+        with open(os.path.join(self.data_dir, f"result_count_{mode}.json"), "w+") as tf:
+            json.dump(dial_count_format, tf, indent=2)
+
+
+
 
 
 class AnalyzeSGD(object):
@@ -293,9 +365,12 @@ def main():
 
     # SGD = AnalyzeSGD(args)
     # SGD = AnalyzeMultiWOZ(args)
-    SGD = AnalyzeSIMMC(args)
-    SGD.analyze()
+    # SGD = AnalyzeSIMMC(args)
+    # SGD.analyze()
     # pass
+
+    analyzer = AnalyzeMultiWOZ()
+    analyzer.count_db_result()
 
 
 if __name__ == "__main__":
