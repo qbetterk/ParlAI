@@ -1306,6 +1306,16 @@ task_list = [
         ),
     },
     {
+        "id": "Disambiguation",
+        "display_name": "Disambiguation",
+        "task": "disambiguation",
+        "tags": [],
+        "description": (
+            "A fully labeled collection of synthesized one-turn conversations spanning"
+            "over multiple domains and topics."
+        ),
+    },
+    {
         "id": "SelfChat",
         "display_name": "SelfChat",
         "task": "self_chat",

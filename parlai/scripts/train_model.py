@@ -512,17 +512,7 @@ class TrainLoop:
             self.tb_logger.log_metrics('valid', self.parleys, valid_report)
             # flush on a validation
             self.tb_logger.flush()
-<<<<<<< HEAD
-        # # saving
-        # if (
-        #     opt.get('model_file')
-        #     and opt.get('save_after_valid')
-        #     and is_primary_worker()
-        # ):
-        #     logging.info(f"saving model checkpoint: {opt['model_file']}.checkpoint_ep{self._total_epochs:.0f}")
-        #     self.save_model(f'.checkpoint_ep{self._total_epochs:.0f}')
 
-=======
         if opt['wandb_log'] and is_primary_worker():
             valid_report['total_exs'] = self._total_exs
             self.wb_logger.log_metrics('valid', self.parleys, valid_report)
@@ -535,7 +525,6 @@ class TrainLoop:
         ):
             logging.info(f"saving model checkpoint: {opt['model_file']}.checkpoint")
             self.save_model('.checkpoint')
->>>>>>> f302b121e0a37ec011e9bd468b317909ba2d74f5
 
         # send valid metrics to agent if the agent wants them
         if hasattr(self.agent, 'receive_metrics'):
@@ -913,24 +902,6 @@ class TrainLoop:
             # reload best validation model
             self.agent = create_agent(opt)
 
-<<<<<<< HEAD
-        # # perform final validation/testing
-        # valid_worlds = load_eval_worlds(self.agent, opt, 'valid')
-        # max_exs = opt['validation_max_exs'] if opt.get('short_final_eval') else -1
-        # v_report = self._run_eval(valid_worlds, opt, 'valid', max_exs, write_log=True)
-        # test_worlds = load_eval_worlds(self.agent, opt, 'test')
-        # t_report = self._run_eval(test_worlds, opt, 'test', max_exs, write_log=True)
-        # if valid_worlds:
-        #     for valid_world in valid_worlds:
-        #         valid_world.shutdown()
-        # if test_worlds:
-        #     for test_world in test_worlds:
-        #         test_world.shutdown()
-
-        # print_announcements(opt)
-
-        # return v_report, t_report
-=======
     def train(self):
         """
         Perform a training run.
@@ -964,7 +935,6 @@ class TrainLoop:
         print_announcements(opt)
 
         return v_report, t_report
->>>>>>> f302b121e0a37ec011e9bd468b317909ba2d74f5
 
 
 @register_script('train_model', aliases=['tm', 'train'])
