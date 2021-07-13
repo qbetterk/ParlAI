@@ -23,7 +23,7 @@ Most of the codes are from https://github.com/budzianowski/multiwoz
 
 # GLOBAL VARIABLES
 DICT_SIZE = 400
-MAX_LENGTH = 50
+MAX_LENGTH = 100
 IGNORE_KEYS_IN_GOAL = ['eod', 'topic', 'messageLen', 'message']
 
 fin = open('./parlai/tasks/multiwoz_dst/utils/mapping.pair','r')

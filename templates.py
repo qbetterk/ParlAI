@@ -16,7 +16,7 @@ def print_examples(grammar, count=10):
 @KlickitatGrammarCollection
 class QBasics:
     root = """
-        ROOT -> [PREFIX] (SIMPLE | COMPLEX) CM A CM B CM or C QM
+        ROOT -> [PREFIX] (SIMPLE | COMPLEX) CM LIST QM
     """
     """
     Some denotions:
@@ -106,7 +106,7 @@ class ABasics:
             STATE-I-WOULD -> (talk | know | ask) about | know for
         """
     state_i_simple = """
-        STATE-I-SIMPLE -> i mean
+        STATE-I-SIMPLE -> i mean | please
     """
 
 # print_examples(ABasics.combined_grammar, 1)

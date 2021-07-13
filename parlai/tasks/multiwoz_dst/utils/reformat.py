@@ -275,7 +275,7 @@ class Reformat_Multiwoz(object):
             ...
             }
         """
-        self.reformat_data_path = self.reformat_data_path.replace(".json", "_filtername.json")
+        # self.reformat_data_path = self.reformat_data_path.replace(".json", "_filtername.json")
         self.data_trade_proc_path = os.path.join(self.data_dir, "dials_trade.json")
         self.load_dials(data_path = self.data_trade_proc_path)
         self.dials_form = {}
@@ -357,16 +357,14 @@ class Reformat_Multiwoz(object):
 
                 turn_form["context"] = " ".join(context)
 
-                if "restaurant name" in turn_form["slots_inf"] or \
-                    "attraction name" in turn_form["slots_inf"] or \
-                        "hotel name" in turn_form["slots_inf"]:
-                    self.dials_form[dial["dialogue_idx"] + "-" + str(turn_form["turn_num"])] = turn_form
-                    if dial["dialogue_idx"] in self.test_list:
-                        self.dials_test[dial["dialogue_idx"] + "-" + str(turn_form["turn_num"])] = turn_form
-                    elif dial["dialogue_idx"] in self.val_list:
-                        self.dials_val[dial["dialogue_idx"] + "-" + str(turn_form["turn_num"])] = turn_form
-                    else:
-                        self.dials_train[dial["dialogue_idx"] + "-" + str(turn_form["turn_num"])] = turn_form
+
+                self.dials_form[dial["dialogue_idx"] + "-" + str(turn_form["turn_num"])] = turn_form
+                if dial["dialogue_idx"] in self.test_list:
+                    self.dials_test[dial["dialogue_idx"] + "-" + str(turn_form["turn_num"])] = turn_form
+                elif dial["dialogue_idx"] in self.val_list:
+                    self.dials_val[dial["dialogue_idx"] + "-" + str(turn_form["turn_num"])] = turn_form
+                else:
+                    self.dials_train[dial["dialogue_idx"] + "-" + str(turn_form["turn_num"])] = turn_form
 
         self.reformat_train_data_path = self.reformat_data_path.replace(".json", "_train.json")
         self.reformat_valid_data_path = self.reformat_data_path.replace(".json", "_valid.json")
@@ -460,7 +458,7 @@ def Parse_args():
     parser.add_argument(      "--mask_predict", default=0, type=int)
     parser.add_argument(      "--reformat_data_name", default=None)
     parser.add_argument(      "--save_dial", default=True, type=bool)
-    parser.add_argument(      "--data_dir", default="/checkpoint/kunqian/multiwoz/data/MultiWOZ_2.1/")
+    parser.add_argument(      "--data_dir", default="/checkpoint/kunqian/multiwoz/data/MULTIWOZ2.2/")
 
     args = parser.parse_args()
     return args

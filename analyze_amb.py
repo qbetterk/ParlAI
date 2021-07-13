@@ -260,6 +260,31 @@ class AnalyzeSGD(object):
         self.stats.update(service_count)
         self._update_stats()
 
+    def collect_db(self):
+        db = {}
+        for mode in ["train","test","dev"]:
+            # load data
+            data_folder = os.path.join(self.data_dir, mode)
+            data = self._load_data(data_folder)
+
+            for dial in data:
+                for turn in dial["turns"]:
+                    for frame in turn["frames"]:
+                        if frame.get("service_results") is not None:
+                            if frame["service"] not in db:
+                                db[frame["service"]] = []
+                            for result in frame["service_results"]:
+                                db[frame["service"]].append(result)
+
+                                # pdb.set_trace()
+
+        for service in db:
+            with open(os.path.join(self.data_dir, f"db_{service}.json"), "w+") as tf:
+                json.dump(db[service], tf, indent=2)
+
+
+
+
 
 class AnalyzeSIMMC(AnalyzeSGD):
     """docstring for AnalyzeSIMMC"""
@@ -363,15 +388,15 @@ def Parse_args():
 def main():
     args = Parse_args()
 
-    # SGD = AnalyzeSGD(args)
+    SGD = AnalyzeSGD(args)
+    SGD.collect_db()
+
     # SGD = AnalyzeMultiWOZ(args)
     # SGD = AnalyzeSIMMC(args)
     # SGD.analyze()
     # pass
 
-    analyzer = AnalyzeMultiWOZ()
-    analyzer.count_db_result()
-
-
+    # analyzer = AnalyzeMultiWOZ()
+    # analyzer.count_db_result()
 if __name__ == "__main__":
     main()
